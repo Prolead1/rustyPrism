@@ -1,9 +1,9 @@
 use std::sync::atomic::AtomicU32;
 
-#[derive(Debug,PartialEq,Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Side {
     Buy,
-    Sell
+    Sell,
 }
 
 #[test]
@@ -62,13 +62,16 @@ impl PartialOrd for Order {
 impl Ord for Order {
     fn cmp(&self, other: &Order) -> std::cmp::Ordering {
         if self.side == Side::Buy {
-            other.price
+            other
+                .price
                 .partial_cmp(&self.price)
-                .unwrap().then_with(|| self.id.cmp(&other.id))
+                .unwrap()
+                .then_with(|| self.id.cmp(&other.id))
         } else {
             self.price
                 .partial_cmp(&other.price)
-                .unwrap().then_with(|| self.id.cmp(&other.id))
+                .unwrap()
+                .then_with(|| self.id.cmp(&other.id))
         }
     }
 }

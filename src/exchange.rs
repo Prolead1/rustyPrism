@@ -1,4 +1,3 @@
-use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use super::order::{Order, Side};
@@ -35,7 +34,7 @@ impl Exchange {
         orders
     }
 
-    pub fn get_symbols(&self) -> HashSet<String> {
+    pub fn get_active_symbols(&self) -> HashSet<String> {
         let mut symbols = HashSet::new();
         symbols.extend(self.orderbook.buy_orders.keys().cloned());
         symbols.extend(self.orderbook.sell_orders.keys().cloned());
@@ -46,7 +45,7 @@ impl Exchange {
 #[test]
 fn test_new_exchange() {
     let exchange = Exchange::new();
-    assert!(exchange.get_open_orders("AAPL").is_empty());
+    assert!(exchange.get_active_symbols().is_empty());
 }
 
 #[test]
