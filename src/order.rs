@@ -1,3 +1,4 @@
+use std::hash::Hash;
 use std::sync::atomic::AtomicU32;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -73,6 +74,12 @@ impl Ord for Order {
                 .unwrap()
                 .then_with(|| self.id.cmp(&other.id))
         }
+    }
+}
+
+impl Hash for Order {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
     }
 }
 

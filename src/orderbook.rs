@@ -1,10 +1,12 @@
+use super::executions::ExecutionList;
 use super::order::{Order, Side};
 use skiplist::ordered_skiplist::OrderedSkipList;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct OrderBook {
     pub buy_orders: HashMap<String, OrderedSkipList<Order>>,
     pub sell_orders: HashMap<String, OrderedSkipList<Order>>,
+    pub executions: ExecutionList,
 }
 
 impl OrderBook {
@@ -12,6 +14,7 @@ impl OrderBook {
         OrderBook {
             buy_orders: HashMap::new(),
             sell_orders: HashMap::new(),
+            executions: ExecutionList::new(),
         }
     }
 
@@ -59,19 +62,18 @@ impl OrderBook {
         }
     }
 
-    pub fn match_orders(&mut self, symbol: &str) -> Option<HashMap<u32, (Order, Order)>> {
+    pub fn match_orders(&mut self, symbol: &str) -> Option<ExecutionList> {
         let buy_orders = self.buy_orders.get_mut(symbol)?;
 
         let sell_orders = self.sell_orders.get_mut(symbol)?;
-
-        let mut executions: HashMap<u32, (Order, Order)> = HashMap::new();
 
         while let (Some(mut buy_order), Some(mut sell_order)) =
             (buy_orders.pop_front(), sell_orders.pop_front())
         {
             if buy_order.price >= sell_order.price {
-                executions.insert(buy_order.id, (buy_order.to_owned(), sell_order.to_owned()));
-                executions.insert(sell_order.id, (buy_order.to_owned(), sell_order.to_owned()));
+                let execution_id: usize = self.executions.matches.len() + 1;
+                self.executions
+                    .insert(execution_id, (buy_order.to_owned(), sell_order.to_owned()));
                 if buy_order.quantity > sell_order.quantity {
                     buy_order.quantity -= sell_order.quantity;
                     buy_orders.insert(buy_order);
@@ -80,9 +82,6 @@ impl OrderBook {
                     sell_order.quantity -= buy_order.quantity;
                     sell_orders.insert(sell_order);
                     continue;
-                } else {
-                    executions.insert(buy_order.id, (buy_order.to_owned(), sell_order.to_owned()));
-                    executions.insert(sell_order.id, (buy_order.to_owned(), sell_order.to_owned()));
                 }
             } else {
                 if buy_order.quantity > 0 {
@@ -94,7 +93,7 @@ impl OrderBook {
                 break;
             }
         }
-        Some(executions)
+        Some(self.executions.to_owned())
     }
 }
 
@@ -190,8 +189,14 @@ fn test_match_orders() {
     order_book.add_order(order2.clone());
     order_book.add_order(order3.clone());
     order_book.add_order(order4.clone());
-    let executions = order_book.match_orders("AAPL");
-    assert_eq!(executions.unwrap().get(&order1.id), Some(&(order1, order3)));
+    let executions = order_book.match_orders("AAPL").unwrap();
+    assert_eq!(
+        executions
+            .get_matches_for_id(order1.id)
+            .get(&(order1.clone(), order3.clone()))
+            .unwrap(),
+        &(order1, order3)
+    );
 }
 
 #[test]
@@ -208,8 +213,12 @@ fn test_multiple_match_orders() {
     order_book.add_order(order4.clone());
     order_book.add_order(order5.clone());
     let executions = order_book.match_orders("AAPL").unwrap();
-    assert_eq!(executions.get(&order1.id), Some(&(order1, order4)));
-    assert_eq!(executions.get(&order3.id), Some(&(order3, order5)));
+    let mut expected: HashSet<(Order, Order)> = HashSet::new();
+    expected.insert((order1.clone(), order4.clone()));
+    assert_eq!(executions.get_matches_for_id(order1.id), expected);
+    expected.clear();
+    expected.insert((order3.clone(), order5.clone()));
+    assert_eq!(executions.get_matches_for_id(order3.id), expected);
 }
 
 #[test]
@@ -224,7 +233,13 @@ fn test_partial_match_orders() {
     order_book.add_order(order3.clone());
     order_book.add_order(order4.clone());
     let executions = order_book.match_orders("AAPL").unwrap();
-    assert_eq!(executions.get(&order1.id), Some(&(order1, order3)));
+    assert_eq!(
+        executions
+            .get_matches_for_id(order1.id)
+            .get(&(order1.clone(), order3.clone()))
+            .unwrap(),
+        &(order1, order3)
+    );
 }
 
 #[test]
@@ -252,16 +267,13 @@ fn test_multiple_partial_match_orders() {
     order_book.add_order(order7.clone());
     order_book.add_order(order8.clone());
     let executions = order_book.match_orders("AAPL").unwrap();
-    assert_eq!(
-        executions.get(&order1.id),
-        Some(&(order1.clone(), order3.clone()))
-    );
-    assert_eq!(
-        executions.get(&order5.id),
-        Some(&(order5.clone(), order7.clone()))
-    );
-    assert_eq!(
-        executions.get(&order5.id),
-        Some(&(order5.clone(), order7.clone()))
-    );
+    let mut expected_exec: HashSet<(Order, Order)> = HashSet::new();
+
+    expected_exec.insert((order1.clone(), order3.clone()));
+    assert_eq!(executions.get_matches_for_id(order1.id), expected_exec);
+    expected_exec.clear();
+    expected_exec.insert((order5.clone(), order7));
+    expected_exec.insert((order5.clone(), order3.clone()));
+
+    assert_eq!(executions.get_matches_for_id(order5.id), expected_exec);
 }

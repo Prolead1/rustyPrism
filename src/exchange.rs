@@ -20,6 +20,23 @@ impl Exchange {
         self.orderbook.match_orders(symbol);
     }
 
+    pub fn cancel_order(&mut self, order: Order) {
+        self.orderbook.remove_order(order);
+    }
+
+    pub fn check_execution(&self, order_id: u32) -> HashSet<(Order, Order)> {
+        self.orderbook.executions.get_matches_for_id(order_id)
+    }
+
+    pub fn get_executions(&self) -> Vec<(Order, Order)> {
+        self.orderbook
+            .executions
+            .matches
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub fn get_open_orders(&self, symbol: &str) -> Vec<&Order> {
         let mut orders = Vec::new();
 
@@ -65,4 +82,13 @@ fn test_match_orders() {
     exchange.execute_order(order1);
     exchange.execute_order(order2);
     assert_eq!(exchange.get_open_orders("AAPL").len(), 0);
+}
+
+#[test]
+fn test_cancel_orders() {
+    let mut exchange = Exchange::new();
+    let order = Order::new("AAPL", 100, 150.0, Side::Buy);
+    exchange.execute_order(order.clone());
+    exchange.cancel_order(order);
+    assert!(exchange.get_open_orders("AAPL").is_empty());
 }
