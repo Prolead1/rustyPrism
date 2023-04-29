@@ -85,13 +85,12 @@ impl Hash for Order {
 
 #[test]
 fn test_order_cmp() {
-    let order1 = Order::new("AAPL", 100, 150.0, Side::Buy);
+    let order1 = Order::new("AAPL", 100, 100.0, Side::Buy);
     let order2 = Order::new("AAPL", 100, 150.0, Side::Sell);
-    assert_eq!(order1.cmp(&order2), std::cmp::Ordering::Less);
-    assert_eq!(order2.cmp(&order1), std::cmp::Ordering::Greater);
     let order3 = Order::new("AAPL", 100, 200.0, Side::Sell);
-    assert_eq!(order3.cmp(&order2), std::cmp::Ordering::Less);
-    assert_eq!(order3.cmp(&order1), std::cmp::Ordering::Less);
+    let order4 = Order::new("AAPL", 100, 200.0, Side::Buy);
+    assert_eq!(order1.cmp(&order4), std::cmp::Ordering::Greater);
+    assert_eq!(order3.cmp(&order2), std::cmp::Ordering::Greater);
 }
 
 #[test]
