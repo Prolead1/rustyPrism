@@ -23,27 +23,29 @@ pub enum FixTag {
     CheckSum,
 }
 
-fn map_tag_value(tag: &FixTag) -> u32 {
-    match tag {
-        FixTag::BeginString => 8,
-        FixTag::BodyLength => 9,
-        FixTag::MsgType => 35,
-        FixTag::SenderCompID => 49,
-        FixTag::TargetCompID => 56,
-        FixTag::MsgSeqNum => 34,
-        FixTag::SendingTime => 52,
-        FixTag::CheckSum => 10,
-        FixTag::Symbol => 55,
-        FixTag::Side => 54,
-        FixTag::OrderQty => 38,
-        FixTag::Price => 44,
-        FixTag::OrdType => 40,
-        FixTag::OrderID => 37,
-        FixTag::ExecID => 17,
-        FixTag::LeavesQty => 151,
-        FixTag::CumQty => 14,
-        FixTag::AvgPx => 6,
-        FixTag::Text => 58,
+impl FixTag {
+    fn tag_value(&self) -> u32 {
+        match self {
+            FixTag::BeginString => 8,
+            FixTag::BodyLength => 9,
+            FixTag::MsgType => 35,
+            FixTag::SenderCompID => 49,
+            FixTag::TargetCompID => 56,
+            FixTag::MsgSeqNum => 34,
+            FixTag::SendingTime => 52,
+            FixTag::CheckSum => 10,
+            FixTag::Symbol => 55,
+            FixTag::Side => 54,
+            FixTag::OrderQty => 38,
+            FixTag::Price => 44,
+            FixTag::OrdType => 40,
+            FixTag::OrderID => 37,
+            FixTag::ExecID => 17,
+            FixTag::LeavesQty => 151,
+            FixTag::CumQty => 14,
+            FixTag::AvgPx => 6,
+            FixTag::Text => 58,
+        }
     }
 }
 
@@ -77,22 +79,10 @@ impl FromStr for FixTag {
 
 impl Display for FixTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = map_tag_value(self);
+        let s = self.tag_value();
         write!(f, "{}", s)
     }
 }
-
-// impl Ord for FixTag {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         map_tag_value(self).cmp(&map_tag_value(other))
-//     }
-// }
-
-// impl PartialOrd for FixTag {
-//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-//         Some(self.cmp(other))
-//     }
-// }
 
 #[test]
 fn test_fix_tag_from_str() {

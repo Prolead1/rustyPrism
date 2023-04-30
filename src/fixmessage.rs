@@ -4,20 +4,20 @@ use chrono::Utc;
 use std::collections::HashMap;
 
 // Struct representing a FIX message
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FixMessage {
     pub fields: HashMap<FixTag, String>,
 }
 
 impl FixMessage {
     // Function to create a new FIX message
-    fn new() -> FixMessage {
+    pub fn new() -> FixMessage {
         FixMessage {
             fields: HashMap::new(),
         }
     }
 
-    fn extract_tag_value<'a>(message: &'a str, tag: &'a str) -> Option<&'a str> {
+    pub fn extract_tag_value<'a>(message: &'a str, tag: &'a str) -> Option<&'a str> {
         let tag_start = format!("{}=", tag);
         let tag_end = '\u{1}';
 
@@ -32,15 +32,15 @@ impl FixMessage {
         None
     }
 
-    fn add_field(&mut self, tag: FixTag, value: &str) {
+    pub fn add_field(&mut self, tag: FixTag, value: &str) {
         self.fields.insert(tag, value.to_string());
     }
 
-    fn remove_field(&mut self, tag: &FixTag) {
+    pub fn remove_field(&mut self, tag: &FixTag) {
         self.fields.remove(tag);
     }
 
-    fn encode(&mut self) -> String {
+    pub fn encode(&mut self) -> String {
         self.add_field(FixTag::SendingTime, &Self::get_time());
         let mut sorted_fields: Vec<(&FixTag, &String)> = self.fields.iter().collect();
         sorted_fields.sort_by_key(|(tag, _)| *tag);
@@ -52,7 +52,7 @@ impl FixMessage {
         format!("{}{}", encoded_message, "\x01")
     }
 
-    fn decode(message: &str, delimiters: &str) -> FixMessage {
+    pub fn decode(message: &str, delimiters: &str) -> FixMessage {
         let mut fields: HashMap<FixTag, String> = HashMap::new();
 
         let tags_values: Vec<&str> = message
@@ -72,12 +72,12 @@ impl FixMessage {
         FixMessage { fields }
     }
 
-    fn get_time() -> String {
+    pub fn get_time() -> String {
         let now = Utc::now();
         now.format("%Y%m%d-%H:%M:%S%.3f").to_string()
     }
 
-    fn to_order(&self) -> Option<Order> {
+    pub fn to_order(&self) -> Option<Order> {
         let symbol = self.fields.get(&FixTag::Symbol)?;
         let quantity = self.fields.get(&FixTag::OrderQty)?.parse::<u32>().ok()?;
         let price = self.fields.get(&FixTag::Price)?.parse::<f64>().ok()?;
