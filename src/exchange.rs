@@ -92,3 +92,37 @@ fn test_cancel_orders() {
     exchange.cancel_order(order);
     assert!(exchange.get_open_orders("AAPL").is_empty());
 }
+
+#[test]
+fn test_get_executions() {
+    let mut exchange = Exchange::new();
+    let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
+    let order2 = Order::new("AAPL", 10, 100.0, Side::Sell);
+    exchange.execute_order(order1.clone());
+    exchange.execute_order(order2.clone());
+    assert_eq!(exchange.get_executions().len(), 1);
+    assert_eq!(exchange.get_executions()[0], (order1, order2));
+}
+
+#[test]
+fn test_get_open_orders() {
+    let mut exchange = Exchange::new();
+    let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
+    let order2 = Order::new("AAPL", 10, 100.0, Side::Sell);
+    exchange.execute_order(order1.clone());
+    exchange.execute_order(order2.clone());
+    assert_eq!(exchange.get_open_orders("AAPL").len(), 0);
+}
+
+#[test]
+fn test_get_active_symbols() {
+    let mut exchange = Exchange::new();
+    let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
+    let order2 = Order::new("GOOG", 10, 100.0, Side::Sell);
+    exchange.execute_order(order1.clone());
+    exchange.execute_order(order2.clone());
+    let mut symbols = HashSet::new();
+    symbols.insert("AAPL".to_string());
+    symbols.insert("GOOG".to_string());
+    assert_eq!(exchange.get_active_symbols(), symbols);
+}

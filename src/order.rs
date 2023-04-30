@@ -3,8 +3,8 @@ use std::sync::atomic::AtomicU32;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Side {
-    Buy,
-    Sell,
+    Buy = 1,
+    Sell = 2,
 }
 
 #[test]

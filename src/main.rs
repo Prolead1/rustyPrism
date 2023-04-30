@@ -1,5 +1,7 @@
 mod exchange;
 mod executions;
+mod fixmessage;
+mod fixtag;
 mod order;
 mod orderbook;
 use exchange::Exchange;
