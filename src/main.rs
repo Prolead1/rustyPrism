@@ -28,7 +28,10 @@ fn main() {
     exchange.get_executions();
     exchange.check_execution(order1.id);
 
-    let rt = Runtime::new().unwrap();
+    let rt = match Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => panic!("Failed to create runtime: {}", e),
+    };
     rt.block_on(async {
         let server = Arc::new(FixMsgServer::new());
         let server_task = tokio::spawn({
@@ -39,9 +42,8 @@ fn main() {
         });
         let mut client = FixMsgClient::new("127.0.0.1", 8080).await;
         let mut client2 = FixMsgClient::new("127.0.0.1", 8080).await;
-        let client_task2 = client2.send_fix_messages("./messages2.txt").await;
         let client_task = client.send_fix_messages("./messages.txt").await;
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        let client_task2 = client2.send_fix_messages("./messages2.txt").await;
         if let Err(e) = client_task {
             eprintln!("Error: {}", e);
         }

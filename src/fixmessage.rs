@@ -64,7 +64,16 @@ impl FixMessage {
             let tag_value_split: Vec<&str> = tag_value.split('=').collect();
             if tag_value_split.len() == 2 {
                 fields.insert(
-                    tag_value_split[0].parse::<FixTag>().ok().unwrap(),
+                    match tag_value_split[0].parse::<FixTag>().ok() {
+                        Some(tag) => tag,
+                        None => {
+                            println!(
+                                "Tag {} is not a valid FIX tag, skipping",
+                                tag_value_split[0]
+                            );
+                            continue;
+                        }
+                    },
                     tag_value_split[1].to_string(),
                 );
             }

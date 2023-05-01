@@ -4,7 +4,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, MutexGuard};
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct FixMsgConnector {
     socket: Arc<Mutex<TcpStream>>,
     processor: Arc<Mutex<FixMsgProcessor>>,
@@ -27,7 +27,6 @@ impl FixMsgConnector {
                 let processor_mut = receive_processor.lock().await;
                 let receive_stream = receive_socket.lock().await;
                 FixMsgConnector::handle_receive(processor_mut, receive_stream).await;
-                println!("Message processed successfully");
             }
         });
 
@@ -38,10 +37,20 @@ impl FixMsgConnector {
                     Some(message) => message,
                     None => continue,
                 };
-                println!("Sending message: {}", message);
                 let send_stream = send_socket.lock().await;
+                println!(
+                    "[CONNECTOR] Sending message: {} to client: {}",
+                    message,
+                    match send_stream.peer_addr() {
+                        Ok(addr) => addr,
+                        Err(err) => {
+                            eprintln!("[CONNECTOR] Error getting peer address: {}", err);
+                            continue;
+                        }
+                    }
+                );
                 FixMsgConnector::handle_send(send_stream, &message).await;
-                println!("Message sent successfully");
+                println!("[CONNECTOR] Message sent successfully");
             }
         });
     }
@@ -53,7 +62,7 @@ impl FixMsgConnector {
         let mut buffer = [0u8; 1024];
         if let Ok(bytes_read) = stream.read(&mut buffer).await {
             let received_message = String::from_utf8_lossy(&buffer[..bytes_read]);
-            println!("Received message: {}", received_message);
+            println!("[CONNECTOR] Received message: {}", received_message);
             processor
                 .process_message(received_message.to_string())
                 .await;
@@ -62,7 +71,7 @@ impl FixMsgConnector {
 
     pub async fn handle_send(mut stream: MutexGuard<'_, TcpStream>, message: &str) {
         if let Err(err) = stream.write_all(message.as_bytes()).await {
-            eprintln!("Error sending message: {}", err);
+            eprintln!("[CONNECTOR] Error sending message: {}", err);
         }
     }
 }

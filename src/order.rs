@@ -63,16 +63,19 @@ impl PartialOrd for Order {
 impl Ord for Order {
     fn cmp(&self, other: &Order) -> std::cmp::Ordering {
         if self.side == Side::Buy {
-            other
-                .price
-                .partial_cmp(&self.price)
-                .unwrap()
-                .then_with(|| self.id.cmp(&other.id))
+            match other.price.partial_cmp(&self.price) {
+                Some(std::cmp::Ordering::Equal) => self.id.cmp(&other.id),
+                Some(std::cmp::Ordering::Greater) => std::cmp::Ordering::Greater,
+                Some(std::cmp::Ordering::Less) => std::cmp::Ordering::Less,
+                None => std::cmp::Ordering::Less,
+            }
         } else {
-            self.price
-                .partial_cmp(&other.price)
-                .unwrap()
-                .then_with(|| self.id.cmp(&other.id))
+            match self.price.partial_cmp(&other.price) {
+                Some(std::cmp::Ordering::Equal) => self.id.cmp(&other.id),
+                Some(std::cmp::Ordering::Greater) => std::cmp::Ordering::Greater,
+                Some(std::cmp::Ordering::Less) => std::cmp::Ordering::Less,
+                None => std::cmp::Ordering::Less,
+            }
         }
     }
 }

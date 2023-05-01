@@ -5,7 +5,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 pub struct FixMsgServer {
     processor: Arc<Mutex<FixMsgProcessor>>,
-    connectors: Arc<Mutex<Vec<FixMsgConnector>>>,
+    connectors: Arc<Mutex<Vec<Arc<Mutex<FixMsgConnector>>>>>,
 }
 
 impl FixMsgServer {
@@ -19,25 +19,28 @@ impl FixMsgServer {
     pub async fn start(&self, address: &str, port: u16) {
         let listener = TcpListener::bind(format!("{}:{}", address, port))
             .await
-            .expect("Failed to bind");
+            .expect("[SERVER] Failed to bind");
 
         loop {
-            let (socket, _) = listener.accept().await.expect("Failed to accept");
+            let (socket, addr) = listener.accept().await.expect("[SERVER] Failed to accept");
+            println!("[SERVER] Accepted connection from {}", addr);
 
-            let connector =
-                FixMsgConnector::new(Arc::new(Mutex::new(socket)), Arc::clone(&self.processor));
-            let connector_arc = Arc::new(Mutex::new(connector.clone()));
-            self.connectors.lock().await.push(connector.clone());
+            let processor = Arc::clone(&self.processor);
+            let connectors = Arc::clone(&self.connectors);
 
             tokio::spawn(async move {
-                connector_arc.lock().await.run().await;
-            });
+                println!("[SERVER] Spawning connector");
+                let connector = Arc::new(Mutex::new(FixMsgConnector::new(
+                    Arc::new(Mutex::new(socket)),
+                    processor,
+                )));
+                println!("[SERVER] Connector spawned, running...");
+                let _ = connector.lock().await.run().await;
 
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    break;
-                }
-            }
+                let mut connectors = connectors.lock().await;
+                connectors.retain(|c| !Arc::ptr_eq(c, &connector));
+                println!("[SERVER] Connector removed from the list");
+            });
         }
     }
 }
