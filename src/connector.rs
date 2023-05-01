@@ -23,7 +23,7 @@ impl FixMsgConnector {
 
         // Spawn a task for receiving messages
         tokio::spawn(async move {
-            println!("[CONNECTOR] Created receiver thread");
+            log_info!("[CONNECTOR] Created receiver thread");
             loop {
                 let processor_mut = Arc::clone(&receive_processor);
                 let receive_stream = Arc::clone(&receive_socket);
@@ -33,7 +33,7 @@ impl FixMsgConnector {
 
         // Spawn a task for sending messages
         tokio::spawn(async move {
-            println!("[CONNECTOR] Created sender thread");
+            log_info!("[CONNECTOR] Created sender thread");
             loop {
                 let message = match send_processor.lock().await.get_message_to_send().await {
                     Some(message) => message,
@@ -70,24 +70,24 @@ impl FixMsgConnector {
 
                         let message_str = String::from_utf8_lossy(&current_message).to_string();
 
-                        println!(
+                        log_info!(
                             "[CONNECTOR] Processing message: {} from client: {}",
                             message_str,
                             match stream.peer_addr() {
                                 Ok(addr) => addr,
                                 Err(err) => {
-                                    eprintln!("[CONNECTOR] Error getting peer address: {}", err);
+                                    log_error!("[CONNECTOR] Error getting peer address: {}", err,);
                                     std::net::SocketAddr::from(([0, 0, 0, 0], 0))
                                 }
-                            }
+                            },
                         );
 
                         let processor_clone = Arc::clone(&processor);
                         let message_clone = message_str.clone();
                         tokio::spawn(async move {
-                            println!(
+                            log_info!(
                                 "[CONNECTOR] Creating processor thread for message: {}",
-                                message_clone
+                                message_clone,
                             );
                             let mut processor = processor_clone.lock().await;
                             processor.process_message(message_clone).await;
@@ -95,7 +95,7 @@ impl FixMsgConnector {
                     }
                 }
                 Err(err) => {
-                    eprintln!("[CONNECTOR] Error reading from stream: {}", err);
+                    log_error!("[CONNECTOR] Error reading from stream: {}", err);
                     break;
                 }
             }
@@ -104,7 +104,7 @@ impl FixMsgConnector {
 
     pub async fn handle_send(stream: Arc<Mutex<TcpStream>>, message: &str) {
         let mut stream = stream.lock().await;
-        println!(
+        log_info!(
             "[CONNECTOR] Sending message: {} to client: {}",
             message,
             match stream.peer_addr() {
@@ -112,11 +112,11 @@ impl FixMsgConnector {
                 Err(_) => {
                     return;
                 }
-            }
+            },
         );
         match stream.write_all(message.as_bytes()).await {
-            Ok(_) => println!("[CONNECTOR] Message sent successfully"),
-            Err(err) => eprintln!("[CONNECTOR] Error sending message: {}", err),
+            Ok(_) => log_info!("[CONNECTOR] Message sent successfully"),
+            Err(err) => log_error!("[CONNECTOR] Error sending message: {}", err),
         }
     }
 }

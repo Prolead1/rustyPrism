@@ -18,19 +18,19 @@ impl FixMsgProcessor {
     }
 
     pub async fn process_message(&mut self, message: String) {
-        println!("[PROCESSOR] Processing message: {}", message);
+        log_info!("[PROCESSOR] Processing message: {}", message);
         let mut fix_message = FixMessage::decode(&message, "|");
-        println!("[PROCESSOR] Decoded message: {:?}", fix_message);
+        log_info!("[PROCESSOR] Decoded message: {:?}", fix_message);
         self.received_messages
             .lock()
             .await
             .push(fix_message.clone());
         self.message_to_send = Arc::new(Mutex::new(fix_message.encode()));
-        println!(
+        log_info!(
             "[PROCESSOR] Updated message: {}",
-            self.message_to_send.lock().await
+            self.message_to_send.lock().await,
         );
-        println!("[PROCESSOR] Message processing finished");
+        log_info!("[PROCESSOR] Message processing finished");
     }
 
     pub async fn get_message_to_send(&self) -> Option<String> {

@@ -67,9 +67,9 @@ impl FixMessage {
                     match tag_value_split[0].parse::<FixTag>().ok() {
                         Some(tag) => tag,
                         None => {
-                            println!(
+                            log_info!(
                                 "[MESSAGE] Tag {} is not a valid FIX tag, skipping",
-                                tag_value_split[0]
+                                tag_value_split[0],
                             );
                             continue;
                         }

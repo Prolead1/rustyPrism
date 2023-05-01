@@ -1,3 +1,5 @@
+#[macro_use]
+mod log;
 mod client;
 mod connector;
 mod exchange;
@@ -45,7 +47,7 @@ async fn run_client_task(messages_file: &str) {
     let mut client = FixMsgClient::new("127.0.0.1", 8080).await;
     let client_send = client.send_fix_messages(messages_file).await;
     if let Err(e) = client_send {
-        eprintln!("Error: {}", e);
+        log_error!("Error: {}", e);
     }
 }
 
@@ -53,7 +55,7 @@ async fn run_client_task(messages_file: &str) {
 async fn main() {
     let exchange_task = task::spawn(run_exchange_tasks());
 
-    let server_task = task::spawn(run_server_task(30));
+    let server_task = task::spawn(run_server_task(1));
 
     let client1_task = task::spawn(run_client_task("./messages.txt"));
 
