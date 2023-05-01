@@ -40,3 +40,33 @@ impl FixMsgProcessor {
         Some(self.message_to_send.lock().await.clone())
     }
 }
+
+#[tokio::test]
+async fn test_new() {
+    let processor = FixMsgProcessor::new();
+    assert!(processor.received_messages.lock().await.is_empty());
+    assert!(processor.message_to_send.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn test_process_message() {
+    use super::fixmessage::FixMessage;
+    let mut processor = FixMsgProcessor::new();
+    let message = String::from(
+        "8=FIX.4.2|9=70|35=A|49=SERVER|56=CLIENT|34=1|52=20210201-00:00:00.000|98=0|108=30|10=000|\x01",
+    );
+    let expected_message = String::from(format!(
+        "8=FIX.4.2|9=70|35=A|49=SERVER|56=CLIENT|34=1|52={}|10=000|\x01",
+        FixMessage::get_time()
+    ));
+    let expected_fix_message = FixMessage::decode(&message, "|");
+    processor.process_message(message).await;
+    assert_eq!(
+        processor.get_message_to_send().await.unwrap(),
+        expected_message
+    );
+    assert_eq!(
+        processor.received_messages.lock().await[0],
+        expected_fix_message
+    );
+}

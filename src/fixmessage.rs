@@ -68,7 +68,7 @@ impl FixMessage {
                         Some(tag) => tag,
                         None => {
                             println!(
-                                "Tag {} is not a valid FIX tag, skipping",
+                                "[MESSAGE] Tag {} is not a valid FIX tag, skipping",
                                 tag_value_split[0]
                             );
                             continue;
