@@ -55,7 +55,7 @@ async fn run_client_task(messages_file: &str) {
 async fn main() {
     let exchange_task = task::spawn(run_exchange_tasks());
 
-    let server_task = task::spawn(run_server_task(1));
+    let server_task = task::spawn(run_server_task(30));
 
     let client1_task = task::spawn(run_client_task("./messages.txt"));
 
