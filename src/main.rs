@@ -7,12 +7,13 @@ mod fixtag;
 mod order;
 mod orderbook;
 mod processor;
+mod server;
 use std::sync::Arc;
 
 use client::FixMsgClient;
-use connector::FixMsgServer;
 use exchange::Exchange;
 use order::{Order, Side};
+use server::FixMsgServer;
 use tokio::runtime::Runtime;
 
 fn main() {
@@ -36,11 +37,16 @@ fn main() {
                 server.start("127.0.0.1", 8080).await;
             }
         });
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         let mut client = FixMsgClient::new("127.0.0.1", 8080).await;
+        let mut client2 = FixMsgClient::new("127.0.0.1", 8080).await;
+        let client_task2 = client2.send_fix_messages("./messages2.txt").await;
         let client_task = client.send_fix_messages("./messages.txt").await;
-
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         if let Err(e) = client_task {
+            eprintln!("Error: {}", e);
+        }
+
+        if let Err(e) = client_task2 {
             eprintln!("Error: {}", e);
         }
 
