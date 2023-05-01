@@ -45,6 +45,7 @@ impl FixMsgClient {
 
         while let Some(line) = lines.next_line().await? {
             self.stream.write_all(line.as_bytes()).await?;
+            self.stream.write_all(b"\x01").await?;
         }
 
         Ok(())
