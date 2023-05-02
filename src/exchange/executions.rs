@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::order::{Order, Side};
+use crate::order::Order;
 
 #[derive(Debug, Clone)]
 pub struct ExecutionList {
@@ -48,6 +48,7 @@ fn test_new_execution_list() {
 
 #[test]
 fn test_insert_execution() {
+    use crate::order::Side;
     let mut executions = ExecutionList::new();
     let order1 = Order::new("AAPL", 100, 150.0, Side::Buy);
     let order2 = Order::new("AAPL", 100, 150.0, Side::Sell);
@@ -63,6 +64,7 @@ fn test_insert_execution() {
 
 #[test]
 fn test_lookup_with_order_id() {
+    use crate::order::Side;
     let mut executions = ExecutionList::new();
     let order1 = Order::new("AAPL", 100, 150.0, Side::Buy);
     let order2 = Order::new("AAPL", 100, 150.0, Side::Sell);

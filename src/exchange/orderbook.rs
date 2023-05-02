@@ -1,7 +1,7 @@
 use super::executions::ExecutionList;
 use crate::order::{Order, Side};
 use skiplist::ordered_skiplist::OrderedSkipList;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 pub struct OrderBook {
     pub buy_orders: HashMap<String, OrderedSkipList<Order>>,
@@ -201,6 +201,7 @@ fn test_match_orders() {
 
 #[test]
 fn test_multiple_match_orders() {
+    use std::collections::HashSet;
     let mut order_book = OrderBook::new();
     let order1 = Order::new("AAPL", 100, 200.0, Side::Buy);
     let order2 = Order::new("AAPL", 100, 150.0, Side::Buy);
@@ -244,6 +245,7 @@ fn test_partial_match_orders() {
 
 #[test]
 fn test_multiple_partial_match_orders() {
+    use std::collections::HashSet;
     let mut order_book = OrderBook::new();
     let order1 = Order::new("AAPL", 100, 200.0, Side::Buy);
     let order2 = Order::new("AAPL", 200, 150.0, Side::Buy);

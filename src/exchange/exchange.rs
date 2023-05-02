@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::orderbook::OrderBook;
-use crate::order::{Order, Side};
+use crate::order::Order;
 
 pub struct Exchange {
     orderbook: OrderBook,
@@ -67,6 +67,7 @@ fn test_new_exchange() {
 
 #[test]
 fn test_add_orders() {
+    use crate::order::Side;
     let mut exchange = Exchange::new();
     let order = Order::new("AAPL", 100, 150.0, Side::Buy);
     exchange.execute_order(order.clone());
@@ -76,6 +77,7 @@ fn test_add_orders() {
 
 #[test]
 fn test_match_orders() {
+    use crate::order::Side;
     let mut exchange = Exchange::new();
     let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
     let order2 = Order::new("AAPL", 10, 100.0, Side::Sell);
@@ -86,6 +88,7 @@ fn test_match_orders() {
 
 #[test]
 fn test_cancel_orders() {
+    use crate::order::Side;
     let mut exchange = Exchange::new();
     let order = Order::new("AAPL", 100, 150.0, Side::Buy);
     exchange.execute_order(order.clone());
@@ -95,6 +98,7 @@ fn test_cancel_orders() {
 
 #[test]
 fn test_get_executions() {
+    use crate::order::Side;
     let mut exchange = Exchange::new();
     let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
     let order2 = Order::new("AAPL", 10, 100.0, Side::Sell);
@@ -106,6 +110,7 @@ fn test_get_executions() {
 
 #[test]
 fn test_get_open_orders() {
+    use crate::order::Side;
     let mut exchange = Exchange::new();
     let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
     let order2 = Order::new("AAPL", 10, 100.0, Side::Sell);
@@ -116,6 +121,7 @@ fn test_get_open_orders() {
 
 #[test]
 fn test_get_active_symbols() {
+    use crate::order::Side;
     let mut exchange = Exchange::new();
     let order1 = Order::new("AAPL", 10, 100.0, Side::Buy);
     let order2 = Order::new("GOOG", 10, 100.0, Side::Sell);
