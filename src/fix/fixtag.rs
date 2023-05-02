@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Display, hash::Hash, hash::Hasher, str::FromStr};
+use std::{fmt::Display, hash::Hash, str::FromStr};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum FixTag {

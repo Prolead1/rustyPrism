@@ -7,6 +7,7 @@ pub enum LogLevel {
     Info,
     Warning,
     Error,
+    Debug,
 }
 
 pub struct Logger<T: Write> {
@@ -30,6 +31,7 @@ impl<T: Write> Logger<T> {
             LogLevel::Info => "INFO",
             LogLevel::Warning => "WARNING",
             LogLevel::Error => "ERROR",
+            LogLevel::Debug => "DEBUG",
         };
 
         let mut locked_output = self.output.lock().unwrap();
@@ -77,9 +79,15 @@ macro_rules! log_error {
     };
 }
 
+macro_rules! log_debug {
+    ($($arg:tt)*) => {
+        crate::log::LOGGER.log(crate::log::LogLevel::Debug, format_args!($($arg)*))
+    };
+}
+
 #[test]
 fn test_logger() {
-    log_info!("This is an informational message: {}", 42);
+    log_debug!("This is an informational message: {}", 42);
     log_warn!("This is a warning message: {}", "something");
     log_error!("This is an error message: {}", true);
 }

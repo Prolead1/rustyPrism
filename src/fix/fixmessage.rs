@@ -1,5 +1,5 @@
 use super::fixtag::FixTag;
-use super::order::{Order, Side};
+use crate::order::{Order, Side};
 use chrono::Utc;
 use std::collections::HashMap;
 
@@ -67,7 +67,7 @@ impl FixMessage {
                     match tag_value_split[0].parse::<FixTag>().ok() {
                         Some(tag) => tag,
                         None => {
-                            log_info!(
+                            log_debug!(
                                 "[MESSAGE] Tag {} is not a valid FIX tag, skipping",
                                 tag_value_split[0],
                             );

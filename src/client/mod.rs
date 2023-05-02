@@ -20,7 +20,7 @@ impl FixMsgClient {
             .local_addr()
             .expect("[CLIENT] Failed to retrieve local address");
 
-        log_info!(
+        log_debug!(
             "[CLIENT] Connecting from {}:{} to server at {}:{}...",
             client_socket_addr.ip(),
             client_socket_addr.port(),
@@ -28,7 +28,7 @@ impl FixMsgClient {
             port,
         );
 
-        log_info!(
+        log_debug!(
             "[CLIENT] Successfully connected to server at {}:{}",
             host,
             port,
@@ -39,7 +39,7 @@ impl FixMsgClient {
 
     pub async fn send_fix_messages(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
         let absolute_path = std::fs::canonicalize(file_path)?;
-        log_info!("[CLIENT] Sending messages from file: {:?}", absolute_path);
+        log_debug!("[CLIENT] Sending messages from file: {:?}", absolute_path);
         let file = File::open(absolute_path).await?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();

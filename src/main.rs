@@ -1,21 +1,16 @@
 #[macro_use]
 mod log;
 mod client;
-mod connector;
 mod exchange;
-mod executions;
-mod fixmessage;
-mod fixtag;
+mod fix;
 mod order;
-mod orderbook;
-mod processor;
 mod server;
 use std::sync::Arc;
 
 use client::FixMsgClient;
-use exchange::Exchange;
+use exchange::exchange::Exchange;
 use order::{Order, Side};
-use server::FixMsgServer;
+use server::server::FixMsgServer;
 use tokio::task;
 
 async fn run_exchange_tasks() {

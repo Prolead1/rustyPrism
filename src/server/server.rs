@@ -23,23 +23,23 @@ impl FixMsgServer {
 
         loop {
             let (socket, addr) = listener.accept().await.expect("[SERVER] Failed to accept");
-            log_info!("[SERVER] Accepted connection from {}", addr);
+            log_debug!("[SERVER] Accepted connection from {}", addr);
 
             let processor = Arc::clone(&self.processor);
             let connectors = Arc::clone(&self.connectors);
 
             tokio::spawn(async move {
-                log_info!("[SERVER] Spawning connector");
+                log_debug!("[SERVER] Spawning connector");
                 let connector = Arc::new(Mutex::new(FixMsgConnector::new(
                     Arc::new(Mutex::new(socket)),
                     processor,
                 )));
-                log_info!("[SERVER] Connector spawned, running...");
+                log_debug!("[SERVER] Connector spawned, running...");
                 let _ = connector.lock().await.run().await;
 
                 let mut connectors = connectors.lock().await;
                 connectors.retain(|c| !Arc::ptr_eq(c, &connector));
-                log_info!("[SERVER] Connector removed from the list");
+                log_debug!("[SERVER] Connector removed from the list");
             });
         }
     }

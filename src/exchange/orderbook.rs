@@ -1,5 +1,5 @@
 use super::executions::ExecutionList;
-use super::order::{Order, Side};
+use crate::order::{Order, Side};
 use skiplist::ordered_skiplist::OrderedSkipList;
 use std::collections::{HashMap, HashSet};
 

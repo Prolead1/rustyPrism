@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use super::order::{Order, Side};
 use super::orderbook::OrderBook;
+use crate::order::{Order, Side};
 
 pub struct Exchange {
     orderbook: OrderBook,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::fixmessage::FixMessage;
+use crate::fix::fixmessage::FixMessage;
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
@@ -18,19 +18,19 @@ impl FixMsgProcessor {
     }
 
     pub async fn process_message(&mut self, message: String) {
-        log_info!("[PROCESSOR] Processing message: {}", message);
+        log_debug!("[PROCESSOR] Processing message: {}", message);
         let mut fix_message = FixMessage::decode(&message, "|");
-        log_info!("[PROCESSOR] Decoded message: {:?}", fix_message);
+        log_debug!("[PROCESSOR] Decoded message: {:?}", fix_message);
         self.received_messages
             .lock()
             .await
             .push(fix_message.clone());
         self.message_to_send = Arc::new(Mutex::new(fix_message.encode()));
-        log_info!(
+        log_debug!(
             "[PROCESSOR] Updated message: {}",
             self.message_to_send.lock().await,
         );
-        log_info!("[PROCESSOR] Message processing finished");
+        log_debug!("[PROCESSOR] Message processing finished");
     }
 
     pub async fn get_message_to_send(&self) -> Option<String> {
@@ -50,8 +50,8 @@ async fn test_new() {
 
 #[tokio::test]
 async fn test_process_message() {
-    use super::fixmessage::FixMessage;
-    use super::fixtag::FixTag;
+    use crate::fix::fixmessage::FixMessage;
+    use crate::fix::fixtag::FixTag;
     let mut processor = FixMsgProcessor::new();
     let message = String::from(
         "8=FIX.4.2|9=70|35=A|49=SERVER|56=CLIENT|34=1|52=20210201-00:00:00.000|98=0|108=30|10=000|\x01",
