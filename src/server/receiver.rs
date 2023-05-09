@@ -1,4 +1,5 @@
 use super::processor::FixMsgProcessor;
+use crate::fix::fixmessage::FixMessage;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
@@ -8,10 +9,7 @@ use tokio::sync::Mutex;
 pub struct FixMsgReceiver {}
 
 impl FixMsgReceiver {
-    pub async fn handle_receive(
-        processor: Arc<Mutex<FixMsgProcessor>>,
-        stream: Arc<Mutex<TcpStream>>,
-    ) {
+    pub async fn handle_receive(processor: Arc<FixMsgProcessor>, stream: Arc<Mutex<TcpStream>>) {
         let mut buffer = Vec::new();
 
         let mut stream = stream.lock().await;
@@ -34,7 +32,7 @@ impl FixMsgReceiver {
                         let message_str = String::from_utf8_lossy(&current_message).to_string();
 
                         log_info!(
-                            "[RECEIVER] Processing message: {} from client: {}",
+                            "[RECEIVER] Received message: {} from client: {}",
                             message_str,
                             match stream.peer_addr() {
                                 Ok(addr) => addr,
@@ -45,16 +43,13 @@ impl FixMsgReceiver {
                             },
                         );
 
-                        let processor_clone = Arc::clone(&processor);
-                        let message_clone = message_str.clone();
-                        tokio::spawn(async move {
-                            log_debug!(
-                                "[RECEIVER] Creating processor thread for message: {}",
-                                message_clone,
-                            );
-                            let mut processor = processor_clone.lock().await;
-                            processor.process_message(message_clone).await;
-                        });
+                        let decoded_message = FixMessage::decode(&message_str, "|");
+
+                        processor
+                            .received_messages
+                            .lock()
+                            .await
+                            .push_back(decoded_message);
                     }
                 }
                 Err(err) => {

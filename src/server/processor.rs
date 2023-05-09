@@ -1,43 +1,29 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use crate::fix::fixmessage::FixMessage;
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct FixMsgProcessor {
-    received_messages: Arc<Mutex<Vec<FixMessage>>>,
-    pub message_to_send: Arc<Mutex<String>>,
+    pub received_messages: Arc<Mutex<VecDeque<FixMessage>>>,
+    pub messages_to_send: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl FixMsgProcessor {
     pub fn new() -> Self {
         FixMsgProcessor {
-            received_messages: Arc::new(Mutex::new(Vec::new())),
-            message_to_send: Arc::new(Mutex::new(String::new())),
+            received_messages: Arc::new(Mutex::new(VecDeque::new())),
+            messages_to_send: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
-    pub async fn process_message(&mut self, message: String) {
-        log_debug!("[PROCESSOR] Processing message: {}", message);
-        let mut fix_message = FixMessage::decode(&message, "|");
-        log_debug!("[PROCESSOR] Decoded message: {:?}", fix_message);
-        self.received_messages
-            .lock()
-            .await
-            .push(fix_message.clone());
-        self.message_to_send = Arc::new(Mutex::new(fix_message.encode()));
-        log_debug!(
-            "[PROCESSOR] Updated message: {}",
-            self.message_to_send.lock().await,
-        );
-        log_debug!("[PROCESSOR] Message processing finished");
-    }
-
-    pub async fn get_message_to_send(&self) -> Option<String> {
-        if self.message_to_send.lock().await.is_empty() {
-            return None;
+    pub async fn handle_process(processor: Arc<FixMsgProcessor>) {
+        let mut received_messages = processor.received_messages.lock().await;
+        let mut messages_to_send = processor.messages_to_send.lock().await;
+        while let Some(mut message) = received_messages.pop_front() {
+            log_info!("[PROCESSOR] Processing message: {:?}", message);
+            messages_to_send.push_back(message.encode());
         }
-        Some(self.message_to_send.lock().await.clone())
     }
 }
 
@@ -45,37 +31,5 @@ impl FixMsgProcessor {
 async fn test_new() {
     let processor = FixMsgProcessor::new();
     assert!(processor.received_messages.lock().await.is_empty());
-    assert!(processor.message_to_send.lock().await.is_empty());
-}
-
-#[tokio::test]
-async fn test_process_message() {
-    use crate::fix::fixmessage::FixMessage;
-    use crate::fix::fixtag::FixTag;
-    let mut processor = FixMsgProcessor::new();
-    let message = String::from(
-        "8=FIX.4.2|9=70|35=A|49=SERVER|56=CLIENT|34=1|52=20210201-00:00:00.000|98=0|108=30|10=000|\x01",
-    );
-    let mut expected_fix_message = FixMessage::decode(&message, "|");
-
-    processor.process_message(message).await;
-    assert_eq!(
-        processor.received_messages.lock().await[0],
-        expected_fix_message
-    );
-    expected_fix_message
-        .fields
-        .insert(FixTag::SendingTime, FixMessage::get_time());
-    let expected_message = String::from(format!(
-        "8=FIX.4.2|9=70|35=A|49=SERVER|56=CLIENT|34=1|52={}|10=000|\x01",
-        expected_fix_message
-            .fields
-            .get(&FixTag::SendingTime)
-            .unwrap()
-    ));
-
-    assert_eq!(
-        processor.get_message_to_send().await.unwrap(),
-        expected_message
-    );
+    assert!(processor.messages_to_send.lock().await.is_empty());
 }
