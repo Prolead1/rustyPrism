@@ -16,12 +16,12 @@ impl FixMsgServer {
         }
     }
 
-    pub async fn start(&self, address: &str, receiver_port: u16, sender_port: u16) {
-        let receive_processor = Arc::clone(&self.processor);
-        let processor = Arc::clone(&self.processor);
-        let send_processor = Arc::clone(&self.processor);
-
-        match TcpListener::bind(format!("{}:{}", address, receiver_port)).await {
+    async fn create_receiver(
+        _address: &str,
+        _receiver_port: u16,
+        _processor: Arc<FixMsgProcessor>,
+    ) {
+        match TcpListener::bind(format!("{}:{}", _address, _receiver_port)).await {
             Ok(receiver) => {
                 tokio::spawn(async move {
                     loop {
@@ -33,7 +33,7 @@ impl FixMsgServer {
                                 log_debug!("[SERVER] Accepted connection from {}", addr);
                                 log_debug!("[SERVER] Created receiver thread");
 
-                                let processor = Arc::clone(&receive_processor);
+                                let processor = Arc::clone(&_processor);
                                 FixMsgReceiver::handle_receive(processor, receive_stream).await;
                             }
                             Err(e) => {
@@ -49,23 +49,37 @@ impl FixMsgServer {
                 return;
             }
         };
+    }
 
+    async fn create_processor(_processor: Arc<FixMsgProcessor>) {
         tokio::spawn(async move {
             log_debug!("[SERVER] Created processor thread");
             loop {
-                FixMsgProcessor::handle_process(Arc::clone(&processor)).await;
+                FixMsgProcessor::handle_process(Arc::clone(&_processor)).await;
             }
         });
+    }
 
-        match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
+    async fn create_sender(_address: &str, _sender_port: u16, _processor: Arc<FixMsgProcessor>) {
+        match TcpStream::connect(format!("{}:{}", _address, _sender_port)).await {
             Ok(socket) => {
                 let send_socket = Arc::new(Mutex::new(socket));
                 tokio::spawn(async move {
                     log_debug!("[SERVER] Created sender thread");
+                    let processor = Arc::clone(&_processor);
                     loop {
-                        let processor = Arc::clone(&send_processor);
                         let send_stream = send_socket.lock().await;
-                        FixMsgSender::handle_send_all(processor, send_stream).await;
+                        log_debug!(
+                            "[SENDER] Remaining messages to send: {}",
+                            processor.messages_to_send.lock().await.len()
+                        );
+                        match processor.messages_to_send.lock().await.pop_front() {
+                            Some(message) => {
+                                log_debug!("[SENDER] Message to send: {}", message);
+                                FixMsgSender::handle_send(send_stream, &message).await;
+                            }
+                            None => return,
+                        };
                     }
                 });
             }
@@ -74,5 +88,17 @@ impl FixMsgServer {
                 return;
             }
         };
+    }
+
+    pub async fn start(&self, address: &str, receiver_port: u16, sender_port: u16) {
+        let receive_processor = Arc::clone(&self.processor);
+        let processor = Arc::clone(&self.processor);
+        let send_processor = Arc::clone(&self.processor);
+
+        FixMsgServer::create_receiver(address, receiver_port, receive_processor).await;
+
+        FixMsgServer::create_processor(processor).await;
+
+        FixMsgServer::create_sender(address, sender_port, send_processor).await;
     }
 }
