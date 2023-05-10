@@ -3,16 +3,17 @@ use crate::fix::fixmessage::FixMessage;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use tokio::sync::MutexGuard;
 
 #[derive(Debug)]
 pub struct FixMsgReceiver {}
 
 impl FixMsgReceiver {
-    pub async fn handle_receive(processor: Arc<FixMsgProcessor>, stream: Arc<Mutex<TcpStream>>) {
+    pub async fn handle_receive(
+        processor: Arc<FixMsgProcessor>,
+        mut stream: MutexGuard<'_, TcpStream>,
+    ) {
         let mut buffer = Vec::new();
-
-        let mut stream = stream.lock().await;
 
         loop {
             let mut chunk = vec![0u8; 1024];

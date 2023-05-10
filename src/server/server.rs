@@ -1,46 +1,78 @@
-use super::connector::FixMsgConnector;
 use super::processor::FixMsgProcessor;
+use super::receiver::FixMsgReceiver;
+use super::sender::FixMsgSender;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 pub struct FixMsgServer {
     processor: Arc<FixMsgProcessor>,
-    connectors: Arc<Mutex<Vec<Arc<Mutex<FixMsgConnector>>>>>,
 }
 
 impl FixMsgServer {
     pub fn new() -> Self {
         FixMsgServer {
             processor: Arc::new(FixMsgProcessor::new()),
-            connectors: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    pub async fn start(&self, address: &str, port: u16) {
-        let listener = TcpListener::bind(format!("{}:{}", address, port))
-            .await
-            .expect("[SERVER] Failed to bind");
+    pub async fn start(&self, address: &str, receiver_port: u16, sender_port: u16) {
+        let receive_processor = Arc::clone(&self.processor);
+        let processor = Arc::clone(&self.processor);
+        let send_processor = Arc::clone(&self.processor);
 
-        loop {
-            let (socket, addr) = listener.accept().await.expect("[SERVER] Failed to accept");
-            log_debug!("[SERVER] Accepted connection from {}", addr);
+        match TcpListener::bind(format!("{}:{}", address, receiver_port)).await {
+            Ok(receiver) => {
+                tokio::spawn(async move {
+                    loop {
+                        match receiver.accept().await {
+                            Ok((socket, addr)) => {
+                                let receive_socket = Arc::new(Mutex::new(socket));
+                                let receive_stream = receive_socket.lock().await;
 
-            let connect_processor = Arc::clone(&self.processor);
-            let connectors = Arc::clone(&self.connectors);
+                                log_debug!("[SERVER] Accepted connection from {}", addr);
+                                log_debug!("[SERVER] Created receiver thread");
 
-            tokio::spawn(async move {
-                log_debug!("[SERVER] Spawning connector");
-                let connector = Arc::new(Mutex::new(FixMsgConnector::new(
-                    Arc::new(Mutex::new(socket)),
-                    Arc::clone(&connect_processor),
-                )));
-                log_debug!("[SERVER] Connector spawned, running...");
-                let _ = connector.lock().await.run().await;
+                                let processor = Arc::clone(&receive_processor);
+                                FixMsgReceiver::handle_receive(processor, receive_stream).await;
+                            }
+                            Err(e) => {
+                                log_error!("[SERVER] Failed to accept: {}", e);
+                                continue;
+                            }
+                        };
+                    }
+                });
+            }
+            Err(e) => {
+                log_error!("[SERVER] Failed to bind to port: {}", e);
+                return;
+            }
+        };
 
-                let mut connectors = connectors.lock().await;
-                connectors.retain(|c| !Arc::ptr_eq(c, &connector));
-                log_debug!("[SERVER] Connector removed from the list");
-            });
-        }
+        tokio::spawn(async move {
+            log_debug!("[SERVER] Created processor thread");
+            loop {
+                FixMsgProcessor::handle_process(Arc::clone(&processor)).await;
+            }
+        });
+
+        match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
+            Ok(socket) => {
+                let send_socket = Arc::new(Mutex::new(socket));
+                tokio::spawn(async move {
+                    log_debug!("[SERVER] Created sender thread");
+                    loop {
+                        let processor = Arc::clone(&send_processor);
+                        let send_stream = send_socket.lock().await;
+                        FixMsgSender::handle_send_all(processor, send_stream).await;
+                    }
+                });
+            }
+            Err(e) => {
+                log_warn!("[SERVER] Failed to connect to sender: {}", e);
+                return;
+            }
+        };
     }
 }

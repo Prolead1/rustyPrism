@@ -31,7 +31,7 @@ async fn run_server_task(seconds: u64) {
     let server_task = tokio::spawn({
         let server = Arc::clone(&server);
         async move {
-            server.start("127.0.0.1", 8080).await;
+            server.start("127.0.0.1", 8080, 8081).await;
         }
     });
     tokio::time::sleep(tokio::time::Duration::from_secs(seconds)).await;
