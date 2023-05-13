@@ -30,15 +30,15 @@ async fn run_server_task(seconds: u64) {
     let server_task = tokio::spawn({
         let server = Arc::clone(&server);
         async move {
-            server.start("127.0.0.1", 8080, 8081).await;
+            server.start("127.0.0.1", 8080).await;
         }
     });
     tokio::time::sleep(tokio::time::Duration::from_secs(seconds)).await;
     drop(server_task);
 }
 
-async fn run_client_task(messages_file: &str) {
-    let mut client = FixMsgClient::new("127.0.0.1", 8080).await;
+async fn run_client_task(messages_file: &str, port: u16) {
+    let mut client = FixMsgClient::new("127.0.0.1", port).await;
     let client_send = client.send_fix_messages(messages_file).await;
     if let Err(e) = client_send {
         log_error!("Error: {}", e);
@@ -51,9 +51,12 @@ async fn main() {
 
     let server_task = task::spawn(run_server_task(11));
 
-    let client1_task = task::spawn(run_client_task("./messages.txt"));
+    let client1_task = task::spawn(run_client_task("./messages.txt", 8080));
 
-    let client2_task = task::spawn(run_client_task("./messages2.txt"));
+    let client2_task = task::spawn(run_client_task("./messages2.txt", 8080));
 
-    tokio::try_join!(exchange_task, server_task, client1_task, client2_task).unwrap();
+    match tokio::try_join!(exchange_task, server_task, client1_task, client2_task) {
+        Ok(_) => log_debug!("All tasks completed successfully"),
+        Err(e) => log_error!("Error: {}", e),
+    };
 }

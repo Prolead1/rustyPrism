@@ -2,56 +2,30 @@ use crate::fix::fixmessage::FixMessage;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio::sync::MutexGuard;
 
 #[derive(Debug)]
 pub struct FixMsgReceiver {}
 
 impl FixMsgReceiver {
     pub async fn create_receiver(
-        _address: &str,
-        _receiver_port: u16,
-        _receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
+        receive_socket: Arc<Mutex<TcpStream>>,
+        receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
     ) {
-        match TcpListener::bind(format!("{}:{}", _address, _receiver_port)).await {
-            Ok(receiver) => {
-                tokio::spawn(async move {
-                    loop {
-                        match receiver.accept().await {
-                            Ok((socket, addr)) => {
-                                log_debug!("[SERVER] Created receiver thread");
-                                let receive_socket = Arc::new(Mutex::new(socket));
-                                let receive_stream = receive_socket.lock().await;
-                                let receiver_queue = Arc::clone(&_receiver_queue);
-
-                                log_debug!("[SERVER] Accepted connection from {}", addr);
-
-                                FixMsgReceiver::handle_receive(receiver_queue, receive_stream)
-                                    .await;
-                            }
-                            Err(e) => {
-                                log_error!("[SERVER] Failed to accept: {}", e);
-                                continue;
-                            }
-                        };
-                    }
-                });
-            }
-            Err(e) => {
-                log_error!("[SERVER] Failed to bind to port: {}", e);
-                return;
-            }
-        };
+        tokio::spawn(async move {
+            log_debug!("[SERVER] Created receiver thread");
+            let receiver_queue = Arc::clone(&receiver_queue);
+            FixMsgReceiver::handle_receive(receiver_queue, receive_socket).await;
+        });
     }
 
     pub async fn handle_receive(
         receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
-        mut stream: MutexGuard<'_, TcpStream>,
+        receive_socket: Arc<Mutex<TcpStream>>,
     ) {
         let mut buffer = Vec::new();
+        let mut stream = receive_socket.lock().await;
 
         loop {
             let mut chunk = vec![0u8; 1024];

@@ -1,4 +1,4 @@
-use super::{processor::FixMsgProcessor, receiver::FixMsgReceiver, sender::FixMsgSender};
+use super::{connector::FixMsgConnector, processor::FixMsgProcessor};
 use crate::fix::fixmessage::FixMessage;
 use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::Mutex;
@@ -15,17 +15,16 @@ impl FixMsgServer {
         }
     }
 
-    pub async fn start(&self, address: &str, receiver_port: u16, sender_port: u16) {
+    pub async fn start(&self, address: &str, receiver_port: u16) {
         let receiver_queue = Arc::clone(&self.receiver_queue);
         let sender_queue = Arc::clone(&self.sender_queue);
 
         let processor_receiver_queue = Arc::clone(&self.receiver_queue);
         let processor_sender_queue = Arc::clone(&self.sender_queue);
 
-        FixMsgReceiver::create_receiver(address, receiver_port, receiver_queue).await;
+        FixMsgConnector::create_connector(address, receiver_port, receiver_queue, sender_queue)
+            .await;
 
         FixMsgProcessor::create_processor(processor_receiver_queue, processor_sender_queue).await;
-
-        FixMsgSender::create_sender(address, sender_port, sender_queue).await;
     }
 }

@@ -8,11 +8,11 @@ pub struct FixMsgSender {}
 
 impl FixMsgSender {
     pub async fn create_sender(
-        _address: &str,
-        _sender_port: u16,
-        _sender_queue: Arc<Mutex<VecDeque<String>>>,
+        address: &str,
+        sender_port: u16,
+        sender_queue: Arc<Mutex<VecDeque<String>>>,
     ) {
-        match TcpStream::connect(format!("{}:{}", _address, _sender_port)).await {
+        match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
             Ok(socket) => {
                 let send_socket = Arc::new(Mutex::new(socket));
                 tokio::spawn(async move {
@@ -21,9 +21,9 @@ impl FixMsgSender {
                         let send_stream = send_socket.lock().await;
                         log_debug!(
                             "[SENDER] Remaining messages to send: {}",
-                            _sender_queue.lock().await.len()
+                            sender_queue.lock().await.len()
                         );
-                        match _sender_queue.lock().await.pop_front() {
+                        match sender_queue.lock().await.pop_front() {
                             Some(message) => {
                                 log_debug!("[SENDER] Message to send: {}", message);
                                 FixMsgSender::handle_send(send_stream, &message).await;
