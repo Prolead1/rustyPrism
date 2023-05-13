@@ -1,5 +1,5 @@
-use super::processor::FixMsgProcessor;
 use crate::fix::fixmessage::FixMessage;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
@@ -14,7 +14,7 @@ impl FixMsgReceiver {
     pub async fn create_receiver(
         _address: &str,
         _receiver_port: u16,
-        _processor: Arc<FixMsgProcessor>,
+        _receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
     ) {
         match TcpListener::bind(format!("{}:{}", _address, _receiver_port)).await {
             Ok(receiver) => {
@@ -25,11 +25,12 @@ impl FixMsgReceiver {
                                 log_debug!("[SERVER] Created receiver thread");
                                 let receive_socket = Arc::new(Mutex::new(socket));
                                 let receive_stream = receive_socket.lock().await;
+                                let receiver_queue = Arc::clone(&_receiver_queue);
 
                                 log_debug!("[SERVER] Accepted connection from {}", addr);
 
-                                let processor = Arc::clone(&_processor);
-                                FixMsgReceiver::handle_receive(processor, receive_stream).await;
+                                FixMsgReceiver::handle_receive(receiver_queue, receive_stream)
+                                    .await;
                             }
                             Err(e) => {
                                 log_error!("[SERVER] Failed to accept: {}", e);
@@ -47,7 +48,7 @@ impl FixMsgReceiver {
     }
 
     pub async fn handle_receive(
-        processor: Arc<FixMsgProcessor>,
+        receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
         mut stream: MutexGuard<'_, TcpStream>,
     ) {
         let mut buffer = Vec::new();
@@ -83,11 +84,7 @@ impl FixMsgReceiver {
 
                         let decoded_message = FixMessage::decode(&message_str, "|");
 
-                        processor
-                            .received_messages
-                            .lock()
-                            .await
-                            .push_back(decoded_message);
+                        receiver_queue.lock().await.push_back(decoded_message);
                     }
                 }
                 Err(err) => {

@@ -1,34 +1,31 @@
 use super::{processor::FixMsgProcessor, receiver::FixMsgReceiver, sender::FixMsgSender};
-use std::sync::Arc;
+use crate::fix::fixmessage::FixMessage;
+use std::{collections::VecDeque, sync::Arc};
+use tokio::sync::Mutex;
 pub struct FixMsgServer {
-    processor: Arc<FixMsgProcessor>,
+    pub receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
+    pub sender_queue: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl FixMsgServer {
     pub fn new() -> Self {
         FixMsgServer {
-            processor: Arc::new(FixMsgProcessor::new()),
+            receiver_queue: Arc::new(Mutex::new(VecDeque::new())),
+            sender_queue: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
     pub async fn start(&self, address: &str, receiver_port: u16, sender_port: u16) {
-        let receive_processor = Arc::clone(&self.processor);
-        let processor = Arc::clone(&self.processor);
-        let send_processor = Arc::clone(&self.processor);
+        let receiver_queue = Arc::clone(&self.receiver_queue);
+        let sender_queue = Arc::clone(&self.sender_queue);
 
-        FixMsgReceiver::create_receiver(address, receiver_port, receive_processor).await;
+        let processor_receiver_queue = Arc::clone(&self.receiver_queue);
+        let processor_sender_queue = Arc::clone(&self.sender_queue);
 
-        create_processor(processor).await;
+        FixMsgReceiver::create_receiver(address, receiver_port, receiver_queue).await;
 
-        FixMsgSender::create_sender(address, sender_port, send_processor).await;
+        FixMsgProcessor::create_processor(processor_receiver_queue, processor_sender_queue).await;
+
+        FixMsgSender::create_sender(address, sender_port, sender_queue).await;
     }
-}
-
-pub async fn create_processor(_processor: Arc<FixMsgProcessor>) {
-    tokio::spawn(async move {
-        log_debug!("[SERVER] Created processor thread");
-        loop {
-            FixMsgProcessor::handle_process(Arc::clone(&_processor)).await;
-        }
-    });
 }
