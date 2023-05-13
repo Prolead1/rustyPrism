@@ -3,8 +3,8 @@ use crate::fix::fixmessage::FixMessage;
 use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::Mutex;
 pub struct FixMsgServer {
-    pub receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
-    pub sender_queue: Arc<Mutex<VecDeque<String>>>,
+    receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
+    sender_queue: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl FixMsgServer {
