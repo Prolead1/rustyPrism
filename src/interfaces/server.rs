@@ -1,5 +1,4 @@
-use super::processor::FixMsgProcessor;
-use super::threads::{create_processor, create_receiver, create_sender};
+use super::{processor::FixMsgProcessor, receiver::FixMsgReceiver, sender::FixMsgSender};
 use std::sync::Arc;
 pub struct FixMsgServer {
     processor: Arc<FixMsgProcessor>,
@@ -17,10 +16,19 @@ impl FixMsgServer {
         let processor = Arc::clone(&self.processor);
         let send_processor = Arc::clone(&self.processor);
 
-        create_receiver(address, receiver_port, receive_processor).await;
+        FixMsgReceiver::create_receiver(address, receiver_port, receive_processor).await;
 
         create_processor(processor).await;
 
-        create_sender(address, sender_port, send_processor).await;
+        FixMsgSender::create_sender(address, sender_port, send_processor).await;
     }
+}
+
+pub async fn create_processor(_processor: Arc<FixMsgProcessor>) {
+    tokio::spawn(async move {
+        log_debug!("[SERVER] Created processor thread");
+        loop {
+            FixMsgProcessor::handle_process(Arc::clone(&_processor)).await;
+        }
+    });
 }
