@@ -16,9 +16,9 @@ impl FixMsgConnector {
         sender_queue: Arc<Mutex<VecDeque<String>>>,
         sender_port: u16,
     ) {
+        let address = address.to_owned();
         match TcpListener::bind(format!("{}:{}", address, receiver_port)).await {
             Ok(receiver) => {
-                let address = address.to_owned();
                 tokio::spawn(async move {
                     loop {
                         let receiver_queue = Arc::clone(&receiver_queue);
@@ -52,7 +52,7 @@ impl FixMsgConnector {
                             }
                             Err(e) => {
                                 log_warn!("[CONNECTOR] Failed to create sender: {}", e);
-                                return;
+                                continue;
                             }
                         };
                     }
