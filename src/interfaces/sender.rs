@@ -8,36 +8,26 @@ pub struct FixMsgSender {}
 
 impl FixMsgSender {
     pub async fn create_sender(
-        address: &str,
-        sender_port: u16,
+        send_socket: Arc<Mutex<TcpStream>>,
         sender_queue: Arc<Mutex<VecDeque<String>>>,
     ) {
-        match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
-            Ok(socket) => {
-                let send_socket = Arc::new(Mutex::new(socket));
-                tokio::spawn(async move {
-                    log_debug!("[SERVER] Created sender thread");
-                    loop {
-                        let send_stream = send_socket.lock().await;
-                        log_debug!(
-                            "[SENDER] Remaining messages to send: {}",
-                            sender_queue.lock().await.len()
-                        );
-                        match sender_queue.lock().await.pop_front() {
-                            Some(message) => {
-                                log_debug!("[SENDER] Message to send: {}", message);
-                                FixMsgSender::handle_send(send_stream, &message).await;
-                            }
-                            None => return,
-                        };
+        tokio::spawn(async move {
+            loop {
+                log_debug!("[SENDER] Created sender thread");
+                let send_stream = send_socket.lock().await;
+                log_debug!(
+                    "[SENDER] Remaining messages to send: {}",
+                    sender_queue.lock().await.len()
+                );
+                match sender_queue.lock().await.pop_front() {
+                    Some(message) => {
+                        log_debug!("[SENDER] Message to send: {}", message);
+                        FixMsgSender::handle_send(send_stream, &message).await;
                     }
-                });
+                    None => return,
+                };
             }
-            Err(e) => {
-                log_warn!("[SERVER] Failed to connect to sender: {}", e);
-                return;
-            }
-        };
+        });
     }
 
     pub async fn handle_send(mut stream: MutexGuard<'_, TcpStream>, message: &str) {

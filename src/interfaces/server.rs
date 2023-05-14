@@ -22,8 +22,16 @@ impl FixMsgServer {
         let processor_receiver_queue = Arc::clone(&self.receiver_queue);
         let processor_sender_queue = Arc::clone(&self.sender_queue);
 
-        FixMsgConnector::create_connector(address, receiver_port, receiver_queue, sender_queue)
-            .await;
+        let sender_port = receiver_port + 1;
+
+        FixMsgConnector::create_connector(
+            address,
+            receiver_port,
+            receiver_queue,
+            sender_queue,
+            sender_port,
+        )
+        .await;
 
         FixMsgProcessor::create_processor(processor_receiver_queue, processor_sender_queue).await;
     }
