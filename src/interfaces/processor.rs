@@ -1,6 +1,10 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use crate::fix::fixmessage::FixMessage;
+use crate::{
+    exchange::exchange::Exchange,
+    fix::{fixmessage::FixMessage, fixtag::FixTag},
+    order::Order,
+};
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
@@ -13,8 +17,19 @@ impl FixMsgProcessor {
     ) {
         let mut received_messages = receiver_queue.lock().await;
         let mut messages_to_send = sender_queue.lock().await;
+        let mut exchange = Exchange::new();
         while let Some(mut message) = received_messages.pop_front() {
             log_info!("[PROCESSOR] Processing message: {:?}", message);
+            let order: Order = match message.to_order() {
+                Some(order) => order,
+                None => {
+                    log_error!("[PROCESSOR] Error converting message to order");
+                    continue;
+                }
+            };
+            exchange.execute_order(order);
+            message.modify_field(FixTag::SenderCompID, "SERVER");
+            message.modify_field(FixTag::TargetCompID, "CLIENT");
             messages_to_send.push_back(message.encode());
         }
     }

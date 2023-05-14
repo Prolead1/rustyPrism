@@ -9,12 +9,10 @@ use tokio::{
 pub struct FixMsgConnector {}
 
 impl FixMsgConnector {
-    pub async fn create_connector(
+    pub async fn receiver_thread(
         address: &str,
         receiver_port: u16,
         receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
-        sender_queue: Arc<Mutex<VecDeque<String>>>,
-        sender_port: u16,
     ) {
         let address = address.to_owned();
         match TcpListener::bind(format!("{}:{}", address, receiver_port)).await {
@@ -38,23 +36,6 @@ impl FixMsgConnector {
                                 continue;
                             }
                         }
-
-                        let sender_queue = Arc::clone(&sender_queue);
-                        match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
-                            Ok(socket) => {
-                                let send_socket = Arc::new(Mutex::new(socket));
-                                log_debug!(
-                                    "[CONNECTOR] Connected to sender at {}:{}",
-                                    address,
-                                    sender_port
-                                );
-                                FixMsgSender::create_sender(send_socket, sender_queue).await;
-                            }
-                            Err(e) => {
-                                log_warn!("[CONNECTOR] Failed to create sender: {}", e);
-                                continue;
-                            }
-                        };
                     }
                 });
             }
@@ -63,5 +44,40 @@ impl FixMsgConnector {
                 return;
             }
         };
+    }
+
+    pub async fn sender_thread(
+        address: &str,
+        sender_port: u16,
+        sender_queue: Arc<Mutex<VecDeque<String>>>,
+    ) {
+        let sender_queue = Arc::clone(&sender_queue);
+        match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
+            Ok(socket) => {
+                let send_socket = Arc::new(Mutex::new(socket));
+                log_debug!(
+                    "[CONNECTOR] Connected to sender at {}:{}",
+                    address,
+                    sender_port
+                );
+                FixMsgSender::create_sender(send_socket, sender_queue).await;
+            }
+            Err(e) => {
+                log_warn!("[CONNECTOR] Failed to create sender: {}", e);
+                return;
+            }
+        }
+    }
+
+    pub async fn create_connector(
+        address: &str,
+        receiver_port: u16,
+        receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
+        sender_queue: Arc<Mutex<VecDeque<String>>>,
+        sender_port: u16,
+    ) {
+        let receiver = FixMsgConnector::receiver_thread(address, receiver_port, receiver_queue);
+        let sender = FixMsgConnector::sender_thread(address, sender_port, sender_queue);
+        tokio::join!(receiver, sender);
     }
 }

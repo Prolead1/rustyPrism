@@ -37,12 +37,9 @@ async fn run_server_task(seconds: u64) {
     drop(server_task);
 }
 
-async fn run_client_task(messages_file: &str, port: u16) {
-    let mut client = FixMsgClient::new("127.0.0.1", port).await;
-    let client_send = client.send_fix_messages(messages_file).await;
-    if let Err(e) = client_send {
-        log_error!("Error: {}", e);
-    }
+async fn run_client_task(messages_file: &str, sender_port: u16) {
+    let mut client = FixMsgClient::new("127.0.0.1", sender_port);
+    client.run(messages_file).await;
 }
 
 #[tokio::main]
@@ -55,7 +52,15 @@ async fn main() {
 
     let client2_task = task::spawn(run_client_task("./messages2.txt", 8080));
 
-    match tokio::try_join!(exchange_task, server_task, client1_task, client2_task) {
+    let client3_task = task::spawn(run_client_task("./messages2.txt", 8080));
+
+    match tokio::try_join!(
+        exchange_task,
+        server_task,
+        client1_task,
+        client2_task,
+        client3_task
+    ) {
         Ok(_) => log_debug!("All tasks completed successfully"),
         Err(e) => log_error!("Error: {}", e),
     };

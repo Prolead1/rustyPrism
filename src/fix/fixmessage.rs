@@ -40,6 +40,10 @@ impl FixMessage {
         self.fields.remove(tag);
     }
 
+    pub fn modify_field(&mut self, tag: FixTag, value: &str) {
+        self.fields.insert(tag, value.to_string());
+    }
+
     pub fn encode(&mut self) -> String {
         self.add_field(FixTag::SendingTime, &Self::get_time());
         let mut sorted_fields: Vec<(&FixTag, &String)> = self.fields.iter().collect();
@@ -173,4 +177,12 @@ fn test_to_order() {
     assert_eq!(order.quantity, 100);
     assert_eq!(order.price, 100.00);
     assert_eq!(order.side, Side::Buy);
+}
+
+#[test]
+fn test_modify_field() {
+    let mut fix_message = FixMessage::new();
+    fix_message.add_field(FixTag::Symbol, "AAPL");
+    fix_message.modify_field(FixTag::Symbol, "GOOG");
+    assert_eq!(fix_message.fields.get(&FixTag::Symbol).unwrap(), "GOOG");
 }

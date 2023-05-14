@@ -1,6 +1,8 @@
 use std::hash::Hash;
 use std::sync::atomic::AtomicU32;
 
+use crate::fix::fixmessage::FixMessage;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Side {
     Buy = 1,

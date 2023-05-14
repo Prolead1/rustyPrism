@@ -1,54 +1,64 @@
-use std::error::Error;
+use super::connector::FixMsgConnector;
+use std::collections::VecDeque;
+use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::Mutex;
 
 pub struct FixMsgClient {
-    stream: TcpStream,
+    sender_queue: Arc<Mutex<VecDeque<String>>>,
+    host: String,
+    sender_port: u16,
 }
 
 impl FixMsgClient {
-    pub async fn new(host: &str, port: u16) -> Self {
-        let client = FixMsgClient {
-            stream: TcpStream::connect(format!("{}:{}", host, port))
-                .await
-                .expect("[CLIENT] Failed to connect to server"),
-        };
-
-        let client_socket_addr = client
-            .stream
-            .local_addr()
-            .expect("[CLIENT] Failed to retrieve local address");
-
-        log_debug!(
-            "[CLIENT] Connecting from {}:{} to server at {}:{}...",
-            client_socket_addr.ip(),
-            client_socket_addr.port(),
-            host,
-            port,
-        );
-
-        log_debug!(
-            "[CLIENT] Successfully connected to server at {}:{}",
-            host,
-            port,
-        );
-
-        client
+    pub fn new(host: &str, sender_port: u16) -> Self {
+        FixMsgClient {
+            sender_queue: Arc::new(Mutex::new(VecDeque::new())),
+            host: host.to_owned(),
+            sender_port,
+        }
     }
 
-    pub async fn send_fix_messages(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
-        let absolute_path = std::fs::canonicalize(file_path)?;
+    pub async fn run(&mut self, file_path: &str) {
+        let host = self.host.clone();
+        let sender_port = self.sender_port;
+        let sender_queue = Arc::clone(&self.sender_queue);
+        self.send_fix_messages(file_path).await;
+        FixMsgConnector::sender_thread(&host, sender_port, sender_queue).await;
+    }
+
+    pub async fn send_fix_messages(&mut self, file_path: &str) {
+        let absolute_path = match std::fs::canonicalize(file_path) {
+            Ok(path) => path,
+            Err(e) => {
+                log_error!("[CLIENT] Failed to get absolute path: {}", e);
+                return;
+            }
+        };
+
         log_debug!("[CLIENT] Sending messages from file: {:?}", absolute_path);
-        let file = File::open(absolute_path).await?;
+
+        let file = match File::open(absolute_path).await {
+            Ok(file) => file,
+            Err(e) => {
+                log_error!("[CLIENT] Failed to open file: {}", e);
+                return;
+            }
+        };
+
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
-        while let Some(line) = lines.next_line().await? {
-            self.stream.write_all(line.as_bytes()).await?;
-            self.stream.write_all(b"\x01").await?;
+        while let Some(line) = match lines.next_line().await {
+            Ok(line) => line,
+            Err(e) => {
+                log_error!("[CLIENT] Failed to read line: {}", e);
+                return;
+            }
+        } {
+            let mut sender_queue = self.sender_queue.lock().await;
+            sender_queue.push_back(line + "\x01");
         }
-
-        Ok(())
     }
 }
