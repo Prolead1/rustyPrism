@@ -23,7 +23,7 @@ Each message received by the `ReceiverThread` is held on shared queues which is 
 
 ------to be continued------
 
-## How to run the project
+## Building and Running
 ### Prerequisites
 In order to run the project you will need cargo and rust installed on your machine. Use your prefered methods to set up the rust development environment.
 
