@@ -6,25 +6,10 @@ mod interfaces;
 mod order;
 use std::sync::Arc;
 
-use exchange::exchange::Exchange;
 use interfaces::client::FixMsgClient;
 use interfaces::server::FixMsgServer;
-use order::{Order, Side};
 use std::env;
 use tokio::task;
-
-async fn run_exchange_tasks() {
-    let mut exchange = Exchange::new();
-    let order1 = Order::new("AAPL", 100, 150.0, Side::Buy);
-    let order2 = Order::new("AAPL", 100, 150.0, Side::Sell);
-    exchange.execute_order(order1.clone());
-    exchange.execute_order(order2.clone());
-    exchange.cancel_order(order1.clone());
-    exchange.get_open_orders("AAPL");
-    exchange.get_active_symbols();
-    exchange.get_executions();
-    exchange.check_execution(order1.id);
-}
 
 async fn run_server_task(seconds: u64) {
     let server = Arc::new(FixMsgServer::new());
@@ -38,15 +23,14 @@ async fn run_server_task(seconds: u64) {
     drop(server_task);
 }
 
-async fn run_client_task(messages_file: &str, sender_port: u16) {
-    let mut client = FixMsgClient::new("127.0.0.1", sender_port);
+async fn run_client_task(messages_file: &str, server_receiver_port: u16) {
+    let mut client = FixMsgClient::new("127.0.0.1", server_receiver_port);
     client.run(messages_file).await;
 }
 
 #[tokio::main]
 async fn main() {
     env::set_var("APP_LOGLEVEL", "debug");
-    let exchange_task = task::spawn(run_exchange_tasks());
 
     let server_task = task::spawn(run_server_task(11));
 
@@ -56,13 +40,7 @@ async fn main() {
 
     let client3_task = task::spawn(run_client_task("./messages2.txt", 8080));
 
-    match tokio::try_join!(
-        exchange_task,
-        server_task,
-        client1_task,
-        client2_task,
-        client3_task
-    ) {
+    match tokio::try_join!(server_task, client1_task, client2_task, client3_task,) {
         Ok(_) => log_debug!("All tasks completed successfully"),
         Err(e) => log_error!("Error: {}", e),
     };

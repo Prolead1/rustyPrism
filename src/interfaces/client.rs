@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 pub struct FixMsgClient {
     sender_queue: Arc<Mutex<VecDeque<String>>>,
     host: String,
-    sender_port: u16,
+    server_receiver_port: u16,
 }
 
 impl FixMsgClient {
@@ -16,13 +16,13 @@ impl FixMsgClient {
         FixMsgClient {
             sender_queue: Arc::new(Mutex::new(VecDeque::new())),
             host: host.to_owned(),
-            sender_port,
+            server_receiver_port: sender_port,
         }
     }
 
     pub async fn run(&mut self, file_path: &str) {
         let host = self.host.clone();
-        let sender_port = self.sender_port;
+        let sender_port = self.server_receiver_port;
         let sender_queue = Arc::clone(&self.sender_queue);
         self.send_fix_messages(file_path).await;
         FixMsgConnector::sender_thread(&host, sender_port, sender_queue).await;
