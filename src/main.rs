@@ -10,6 +10,7 @@ use exchange::exchange::Exchange;
 use interfaces::client::FixMsgClient;
 use interfaces::server::FixMsgServer;
 use order::{Order, Side};
+use std::env;
 use tokio::task;
 
 async fn run_exchange_tasks() {
@@ -44,6 +45,7 @@ async fn run_client_task(messages_file: &str, sender_port: u16) {
 
 #[tokio::main]
 async fn main() {
+    env::set_var("APP_LOGLEVEL", "debug");
     let exchange_task = task::spawn(run_exchange_tasks());
 
     let server_task = task::spawn(run_server_task(11));
