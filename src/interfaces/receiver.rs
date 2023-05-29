@@ -44,7 +44,7 @@ impl FixMsgReceiver {
 
                         let message_str = String::from_utf8_lossy(&current_message).to_string();
 
-                        log_info!(
+                        log_debug!(
                             "Received message: {} from: {}",
                             message_str,
                             match stream.peer_addr() {

@@ -31,7 +31,7 @@ impl FixMsgSender {
     }
 
     pub async fn handle_send(mut stream: MutexGuard<'_, TcpStream>, message: &str) {
-        // log_info!(
+        // log_debug!(
         //     "Sending message: {} to client: {}",
         //     message,
         //     match stream.peer_addr() {
