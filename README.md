@@ -54,7 +54,13 @@ cargo build --release
 The project is divided into two parts, one for the exchange library and the other for the FIX message connectors, also called interfaces. The exchange library is responsible for creating the FIX messages and processing them. The interfaces are responsible for creating the TCP connections and sending, receiving and processing the messages.
 
 ### Exchange Library
-This library deals with the maintainence of the orderbook and matching executions. It also converts FIX messages to the Order type understood by the exchange (for now, future design goals tbd).
+This library deals with the maintainence of the orderbook and matching executions. It also converts FIX messages to the Order type understood by the exchange (for now, future design goals tbd). The library is divided into two parts, the orderbook and the matching engine.
+
+#### Orderbook
+The orderbook is responsible for maintaining the orderbook by holding the state of the buy and sell heaps and the executions created. It also provides methods to add and remove orders from the orderbook and to match orders.
+
+#### Matching Engine
+The matching engine is responsible for matching the orders in the orderbook. It receives the orders from the orderbook and matches them. It then sends the matched orders back to the orderbook, if any. The matching algorithm is run every time an order is added to the orderbook.
 
 ### Interfaces
 The interfaces are responsible for creating the TCP connections and sending, receiving and processing the messages. The interfaces are divided into two parts, the connector and the processor. The connector is responsible for creating the TCP connections and the processor is responsible for processing the messages. 
