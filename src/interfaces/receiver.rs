@@ -14,7 +14,7 @@ impl FixMsgReceiver {
         receiver_queue: Arc<Mutex<VecDeque<FixMessage>>>,
     ) {
         tokio::spawn(async move {
-            log_debug!("[SERVER] Created receiver thread");
+            log_debug!("Created receiver thread");
             let receiver_queue = Arc::clone(&receiver_queue);
             FixMsgReceiver::handle_receive(receiver_queue, receive_socket).await;
         });
@@ -45,12 +45,12 @@ impl FixMsgReceiver {
                         let message_str = String::from_utf8_lossy(&current_message).to_string();
 
                         log_info!(
-                            "[RECEIVER] Received message: {} from: {}",
+                            "Received message: {} from: {}",
                             message_str,
                             match stream.peer_addr() {
                                 Ok(addr) => addr,
                                 Err(err) => {
-                                    log_error!("[RECEIVER] Error getting peer address: {}", err,);
+                                    log_error!("Error getting peer address: {}", err,);
                                     std::net::SocketAddr::from(([0, 0, 0, 0], 0))
                                 }
                             },
@@ -62,7 +62,7 @@ impl FixMsgReceiver {
                     }
                 }
                 Err(err) => {
-                    log_error!("[RECEIVER] Error reading from stream: {}", err);
+                    log_error!("Error reading from stream: {}", err);
                     break;
                 }
             }

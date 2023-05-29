@@ -19,11 +19,11 @@ impl FixMsgProcessor {
         let mut messages_to_send = sender_queue.lock().await;
         let mut exchange = Exchange::new();
         while let Some(mut message) = received_messages.pop_front() {
-            log_info!("[PROCESSOR] Processing message: {:?}", message);
+            log_info!("Processing message: {:?}", message);
             let order: Order = match message.to_order() {
                 Some(order) => order,
                 None => {
-                    log_error!("[PROCESSOR] Error converting message to order");
+                    log_error!("Error converting message to order");
                     continue;
                 }
             };
@@ -39,7 +39,7 @@ impl FixMsgProcessor {
         sender_queue: Arc<Mutex<VecDeque<String>>>,
     ) {
         tokio::spawn(async move {
-            log_debug!("[SERVER] Created processor thread");
+            log_debug!("Created processor thread");
             loop {
                 let receiver_queue = Arc::clone(&receiver_queue);
                 let sender_queue = Arc::clone(&sender_queue);

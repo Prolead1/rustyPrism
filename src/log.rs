@@ -1,13 +1,15 @@
+use std::env;
 use std::fmt::Arguments;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum LogLevel {
-    Info,
-    Warning,
-    Error,
     Debug,
+    Info,
+    Warn,
+    Error,
 }
 
 pub struct Logger<T: Write> {
@@ -23,24 +25,28 @@ impl<T: Write> Logger<T> {
         }
     }
 
-    pub fn log(&self, level: LogLevel, args: Arguments) {
-        let elapsed = self.start_time.elapsed();
-        let formatted_time = format_time(elapsed);
+    pub fn log(&self, level: LogLevel, args: Arguments, module: &'static str) {
+        let log_level = get_log_level();
 
-        let log_level_str = match level {
-            LogLevel::Info => "INFO",
-            LogLevel::Warning => "WARNING",
-            LogLevel::Error => "ERROR",
-            LogLevel::Debug => "DEBUG",
-        };
+        if level as u8 >= log_level as u8 {
+            let elapsed = self.start_time.elapsed();
+            let formatted_time = format_time(elapsed);
 
-        let mut locked_output = self.output.lock().unwrap();
-        writeln!(
-            &mut *locked_output,
-            "[{}] [{}] - {}",
-            log_level_str, formatted_time, args
-        )
-        .expect("Failed to write log message");
+            let log_level_str = match level {
+                LogLevel::Info => "INFO",
+                LogLevel::Warn => "WARN",
+                LogLevel::Error => "ERROR",
+                LogLevel::Debug => "DEBUG",
+            };
+
+            let mut locked_output = self.output.lock().unwrap();
+            writeln!(
+                &mut *locked_output,
+                "[{}] [{}] [{}] - {}",
+                log_level_str, formatted_time, module, args
+            )
+            .expect("Failed to write log message");
+        }
     }
 }
 fn format_time(duration: Duration) -> String {
@@ -63,31 +69,44 @@ lazy_static::lazy_static! {
 
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Info, format_args!($($arg)*))
+        crate::log::LOGGER.log(crate::log::LogLevel::Info, format_args!($($arg)*), module_path!())
     };
 }
 
 macro_rules! log_warn {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Warning, format_args!($($arg)*))
+        crate::log::LOGGER.log(crate::log::LogLevel::Warn, format_args!($($arg)*), module_path!())
     };
 }
 
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Error, format_args!($($arg)*))
+        crate::log::LOGGER.log(crate::log::LogLevel::Error, format_args!($($arg)*), module_path!())
     };
 }
 
 macro_rules! log_debug {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Debug, format_args!($($arg)*))
+        crate::log::LOGGER.log(crate::log::LogLevel::Debug, format_args!($($arg)*), module_path!())
     };
+}
+
+fn get_log_level() -> LogLevel {
+    match env::var("APP_LOGLEVEL") {
+        Ok(value) => match value.to_lowercase().as_str() {
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            "debug" => LogLevel::Debug,
+            _ => LogLevel::Info, // Default log level if the value is invalid
+        },
+        Err(_) => LogLevel::Info, // Default log level if the environment variable is not set
+    }
 }
 
 #[test]
 fn test_logger() {
     log_debug!("This is an informational message: {}", 42);
-    log_warn!("This is a warning message: {}", "something");
+    log_warn!("This is a warn message: {}", "something");
     log_error!("This is an error message: {}", true);
 }

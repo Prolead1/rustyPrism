@@ -32,17 +32,17 @@ impl FixMsgClient {
         let absolute_path = match std::fs::canonicalize(file_path) {
             Ok(path) => path,
             Err(e) => {
-                log_error!("[CLIENT] Failed to get absolute path: {}", e);
+                log_error!("Failed to get absolute path: {}", e);
                 return;
             }
         };
 
-        log_debug!("[CLIENT] Sending messages from file: {:?}", absolute_path);
+        log_debug!("Sending messages from file: {:?}", absolute_path);
 
         let file = match File::open(absolute_path).await {
             Ok(file) => file,
             Err(e) => {
-                log_error!("[CLIENT] Failed to open file: {}", e);
+                log_error!("Failed to open file: {}", e);
                 return;
             }
         };
@@ -53,7 +53,7 @@ impl FixMsgClient {
         while let Some(line) = match lines.next_line().await {
             Ok(line) => line,
             Err(e) => {
-                log_error!("[CLIENT] Failed to read line: {}", e);
+                log_error!("Failed to read line: {}", e);
                 return;
             }
         } {

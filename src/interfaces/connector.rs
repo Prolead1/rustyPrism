@@ -24,7 +24,7 @@ impl FixMsgConnector {
                             Ok((socket, addr)) => {
                                 let receive_socket = Arc::new(Mutex::new(socket));
                                 log_debug!(
-                                    "[CONNECTOR] Accepted connection from {}:{}",
+                                    "Accepted connection from {}:{}",
                                     addr.ip(),
                                     addr.port()
                                 );
@@ -32,7 +32,7 @@ impl FixMsgConnector {
                                     .await;
                             }
                             Err(e) => {
-                                log_error!("[CONNECTOR] Failed to accept: {}", e);
+                                log_error!("Failed to accept: {}", e);
                                 continue;
                             }
                         }
@@ -40,7 +40,7 @@ impl FixMsgConnector {
                 });
             }
             Err(e) => {
-                log_error!("[CONNECTOR] Failed to bind to port: {}", e);
+                log_error!("Failed to bind to port: {}", e);
                 return;
             }
         };
@@ -55,15 +55,11 @@ impl FixMsgConnector {
         match TcpStream::connect(format!("{}:{}", address, sender_port)).await {
             Ok(socket) => {
                 let send_socket = Arc::new(Mutex::new(socket));
-                log_debug!(
-                    "[CONNECTOR] Connected to sender at {}:{}",
-                    address,
-                    sender_port
-                );
+                log_debug!("Connected to sender at {}:{}", address, sender_port);
                 FixMsgSender::create_sender(send_socket, sender_queue).await;
             }
             Err(e) => {
-                log_warn!("[CONNECTOR] Failed to create sender: {}", e);
+                log_warn!("Failed to create sender: {}", e);
                 return;
             }
         }

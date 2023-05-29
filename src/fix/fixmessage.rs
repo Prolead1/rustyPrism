@@ -72,7 +72,7 @@ impl FixMessage {
                         Some(tag) => tag,
                         None => {
                             log_debug!(
-                                "[MESSAGE] Tag {} is not a valid FIX tag, skipping",
+                                "Tag {} is not a valid FIX tag, skipping",
                                 tag_value_split[0],
                             );
                             continue;
