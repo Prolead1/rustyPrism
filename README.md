@@ -34,4 +34,26 @@ source message_gen.sh messages2.txt 1000
 cargo run
 ```
 
-This will run the three nodes of the project. The first two commands will generate two files with 1000 messages each. The third command will run the project. The project will read the two files and send the messages to the next node. The messages will be processed and then sent to the next node. The messages will be printed on the console.
+This will run the three nodes of the project. The first two commands will generate two files with 1000 messages each. The third command will run the project. The project will read the two files and send the messages to the next node. The messages will be processed and then sent back to the client nodes. The messages will be printed on the console as they are processed.
+
+### Running the tests
+To run the tests, run the following command in the root directory of the project:
+```bash
+cargo test
+```
+
+### Running a compiled build
+To run a compiled build, run the following command in the root directory of the project:
+```bash
+cargo build --release
+./target/release/rustyPrism
+```
+
+## Project Structure
+The project is divided into two parts, one for the exchange library and the other for the FIX message connectors, also called interfaces. The exchange library is responsible for creating the FIX messages and processing them. The interfaces are responsible for creating the TCP connections and sending, receiving and processing the messages.
+
+### Exchange Library
+This library deals with the maintainence of the orderbook and matching executions. It also converts FIX messages to the Order type understood by the exchange (for now, future design goals tbd).
+
+### Interfaces
+The interfaces are responsible for creating the TCP connections and sending, receiving and processing the messages. The interfaces are divided into two parts, the connector and the processor. The connector is responsible for creating the TCP connections and the processor is responsible for processing the messages.
