@@ -56,7 +56,9 @@ The project is divided into two parts, one for the exchange library and the othe
 This library deals with the maintainence of the orderbook and matching executions. It also converts FIX messages to the Order type understood by the exchange (for now, future design goals tbd).
 
 ### Interfaces
-The interfaces are responsible for creating the TCP connections and sending, receiving and processing the messages. The interfaces are divided into two parts, the connector and the processor. The connector is responsible for creating the TCP connections and the processor is responsible for processing the messages. There are two types of interfaces in the project, which represent the two types of nodes in the system, the client and the exchange. The client interfaces are responsible for creating the TCP connections to the exchange and sending and receiving messages to and from the exchange. The exchange interfaces are responsible for creating the TCP connections to the clients and sending and receiving messages to and from the clients.
+The interfaces are responsible for creating the TCP connections and sending, receiving and processing the messages. The interfaces are divided into two parts, the connector and the processor. The connector is responsible for creating the TCP connections and the processor is responsible for processing the messages. 
+
+There are two types of interfaces in the project, which represent the two types of nodes in the system, the client and the exchange. The client interfaces are responsible for creating the TCP connections to the exchange and sending and receiving messages to and from the exchange. The exchange interfaces are responsible for creating the TCP connections to the clients and sending and receiving messages to and from the clients.
 
 #### Connector
 The connector is responsible for creating the TCP connections. It creates a TCP listener and listens for incoming connections. Once a connection is received, it creates a receiver and a sender thread to receive and send messages over the TCP connection.
