@@ -27,23 +27,24 @@ impl<T: Write> Logger<T> {
 
     pub fn log(&self, level: LogLevel, args: Arguments, module: &'static str) {
         let log_level = get_log_level();
+        let module = module.splitn(2, "::").nth(1).unwrap_or(module);
 
         if level as u8 >= log_level as u8 {
             let elapsed = self.start_time.elapsed();
             let formatted_time = format_time(elapsed);
 
             let log_level_str = match level {
-                LogLevel::Info => "INFO",
-                LogLevel::Warn => "WARN",
-                LogLevel::Error => "ERROR",
-                LogLevel::Debug => "DEBUG",
+                LogLevel::Info => format!("{:^5}", "INFO"),
+                LogLevel::Warn => format!("{:^5}", "WARN"),
+                LogLevel::Error => format!("{:^5}", "ERROR"),
+                LogLevel::Debug => format!("{:^5}", "DEBUG"),
             };
 
             let mut locked_output = self.output.lock().unwrap();
             writeln!(
                 &mut *locked_output,
-                "[{}] [{}] [{}] - {}",
-                log_level_str, formatted_time, module, args
+                "{} [{}] {} - {}",
+                formatted_time, log_level_str, module, args
             )
             .expect("Failed to write log message");
         }
