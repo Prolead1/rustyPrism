@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum LogLevel {
-    Debug,
-    Info,
-    Warn,
-    Error,
+    Debug = 0,
+    Info = 1,
+    Warn = 2,
+    Error = 3,
 }
 
 pub struct Logger<T: Write> {
@@ -106,6 +106,7 @@ fn get_log_level() -> LogLevel {
 
 #[test]
 fn test_logger() {
+    env::set_var("APP_LOGLEVEL", "debug");
     log_debug!("This is an informational message: {}", 42);
     log_warn!("This is a warn message: {}", "something");
     log_error!("This is an error message: {}", true);
