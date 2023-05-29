@@ -1,8 +1,8 @@
-echo "Generating FIX messages to $1..."
+echo "Generating $2 FIX messages to $1..."
 tickers=("AAPL" "GOOGL" "MSFT" "AMZN" "FB")  # List of tickers
 sides=("1" "2")  # Buy (1) and Sell (2) sides
 
-for i in $(seq 1 50000); do
+for i in $(seq 1 $2); do
     ticker=${tickers[$((($i - 1) % ${#tickers[@]}))]}  # Select ticker based on modulus division
     side=${sides[$((($i - 1) % ${#sides[@]}))]}  # Select side based on modulus division
     price=$((RANDOM % 100 + 1))  # Generate random price between 1 and 1000

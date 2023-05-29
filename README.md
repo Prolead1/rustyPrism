@@ -20,3 +20,18 @@ flowchart TD;
 ```
 
 Each message received by the `ReceiverThread` is held on shared queues which is continuously processed by the `ProcessorThread` and then accessed by the `SenderThread` in order to send the processed messages to the next node.
+
+
+## How to run the project
+### Prerequisites
+In order to run the project you will need cargo and rust installed on your machine. Use your prefered methods to set up the rust development environment.
+
+### Running the project
+To run the project, clone the repository and run the following commands in the root directory of the project:
+```bash
+source message_gen.sh messages.txt 1000
+source message_gen.sh messages2.txt 1000
+cargo run
+```
+
+This will run the three nodes of the project. The first two commands will generate two files with 1000 messages each. The third command will run the project. The project will read the two files and send the messages to the next node. The messages will be processed and then sent to the next node. The messages will be printed on the console.
