@@ -1,7 +1,7 @@
 use std::hash::Hash;
 use std::sync::atomic::AtomicU32;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Side {
     Buy = 1,
     Sell = 2,

@@ -23,6 +23,161 @@ Each message received by the `ReceiverThread` is held on shared queues which is 
 
 ------to be continued------
 
+## Smart Order Router (`src/router`)
+
+The `router` module is a self-contained Smart Order Router prototype that makes
+cost-minimising routing decisions across a simulated multi-venue topology. It is
+generic over venue data and does not require a live FIX connection, so it can be
+unit-tested and benchmarked deterministically.
+
+### Components
+
+| Module | Responsibility |
+| --- | --- |
+| `router::fixed` | Integer fixed-point arithmetic (`Fixed`, milli-bps, ppm) plus integer sqrt — no floating point on the hot path. |
+| `router::symbol` | Symbol interning (`SymbolRegistry` → dense `SymbolId`) so venue lookups never hash strings. |
+| `router::venue` | Simulated per-symbol order books, price levels with queue depth, maker/taker **fee tiers**, venue latency and fill probability. |
+| `router::impact` | Microstructure model: square-root **temporary market impact**, linear permanent impact, a Poisson **queue-fill** model and latency-driven quote decay. |
+| `router::scoring` | Scores every destination for an order using implied liquidity, fees, fill probability, slippage, impact and latency; configurable weights. |
+| `router::sor` | Greedy water-filling allocation, execution simulation against the books, adaptive child-slice sizing, and nanosecond decision-latency statistics. |
+| `router::slicing` | **TWAP** and **VWAP** slicing schedules with configurable intervals and a U-shaped intraday volume profile. |
+| `router::topology` | Deterministic, seeded multi-venue topology generator (no external RNG dependency). |
+
+### Routing logic
+
+1. Every venue is scored for the order. Marketable orders are swept against the
+   simulated book to measure slippage, depth coverage and impact; passive orders
+   use maker fees and queue-fill probability.
+2. Venues are ranked best-first and each receives as much displayed implied
+   liquidity as it can support, capped by a fraction of ADV. This greedy sweep is
+   a cost-minimising water-filling allocation: marginal cost is non-decreasing as
+   the ranking is traversed.
+3. When executing a schedule, child slices adapt to current book state: the
+   release is scaled toward `min_slice_fraction` when displayed liquidity cannot
+   cover the slice, and the remainder is carried forward to a later interval.
+
+All routing decisions record their wall-clock latency via `Instant`; in a release
+build a full six-venue scoring + allocation pass completes in well under a
+microsecond, and the router tracks avg/min/max decision time.
+
+### Low-latency hot path
+
+The decision path is engineered to avoid the three usual sources of latency and
+jitter:
+
+1. **No floating point.** Prices and quantities are [`fixed::Fixed`] integers and
+   costs are milli-basis-points. This is deterministic and avoids `f64`
+   conversion in the inner loop. The only remaining float use is the seeded
+   topology generator (setup time) and test/demo formatting.
+2. **No string keys.** `OrderRequest.symbol` is interned once per order into a
+   dense `SymbolId`; venue books and per-venue statistics are `Vec`-indexed.
+3. **No steady-state allocation.** `score_destinations_into`, `route_into`,
+   `execute_into` and `execute_schedule_into` write into caller-owned
+   `Vec<VenueScore>`, `RoutePlan`, `ExecutionReport` and `ScheduleReport`
+   buffers. Reusing a plan/report removes ~170 ns of allocator work per order
+   and, more importantly, the long tail caused by allocator behaviour.
+
+For convenience the allocating wrappers (`score_destinations`, `route`,
+`execute`, `execute_schedule`) remain, but the benchmark harness measures both
+and shows the reused-buffer variants are consistently faster.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    REQ["OrderRequest<br/>symbol · side · qty · limit<br/>arrival price · ADV · horizon"]
+    STYLE{"Execution style"}
+    SLICER["Slicer · slicing.rs<br/>TWAP / VWAP schedule"]
+    ADAPT["Adaptive slice sizing<br/>scales release to book state,<br/>carries remainder forward"]
+    SCORE["Scoring engine · scoring.rs<br/>implied liquidity · fees · fill prob<br/>slippage · impact · latency"]
+    ALLOC["Water-filling allocation<br/>rank best-first · participation cap"]
+    EXEC["Execution simulator<br/>consume book levels"]
+    REP["ExecutionReport / ScheduleReport<br/>avg price · slippage · fees"]
+    STATS["RouterStats<br/>decision latency p50/p99/max"]
+
+    MD[("Venue topology · venue.rs<br/>per-symbol books + queue depth<br/>fee tiers · latency · fill probability")]
+    IMP["Impact model · impact.rs<br/>sqrt temporary + linear permanent"]
+    QUE["Queue model · impact.rs<br/>saturating passive fill"]
+    FX["fixed.rs<br/>integer prices · milli-bps · ppm"]
+    SYM["symbol.rs<br/>interned SymbolId"]
+
+    SYM -.-> MD
+    FX -.-> SCORE
+    REQ --> STYLE
+    STYLE -->|"single order"| SCORE
+    STYLE -->|"TWAP / VWAP"| SLICER --> ADAPT --> SCORE
+    MD --> SCORE
+    IMP --> SCORE
+    QUE --> SCORE
+    SCORE -->|"ranked VenueScore"| ALLOC
+    ALLOC -->|"RoutePlan"| EXEC
+    EXEC -->|"fills"| REP
+    EXEC -->|"depletes depth"| MD
+    EXEC -->|"updates monthly volume → fee tier"| MD
+    EXEC -->|"book-state feedback"| ADAPT
+    SCORE --> STATS
+    ALLOC --> STATS
+    REP --> STATS
+```
+
+### Running the demo
+
+```bash
+cargo run --release --example sor_demo
+```
+
+This prints the simulated venue topology, per-venue scores, a market-order
+execution, and adaptive TWAP and VWAP schedule runs.
+
+### Benchmarking
+
+Two benchmark targets cover the router:
+
+- **`latency_percentiles`** records the full distribution of per-call wall-clock
+  latencies and prints exact percentiles (min/p50/p90/p99/p99.9/max). Topology
+  construction is excluded from the timed region so only router work is measured.
+- **`sor_bench`** is a Criterion suite with warm-up, outlier detection and
+  confidence intervals for scoring, routing, execution, scheduling and topology
+  construction.
+
+```bash
+cargo bench --bench latency_percentiles
+cargo bench --bench sor_bench
+# Criterion also supports a fast pass:
+cargo bench --bench sor_bench -- --quick
+```
+
+Example release-mode output from `latency_percentiles` on an Apple Silicon
+machine (all values in nanoseconds):
+
+| operation | p50 | p99 | p99.9 |
+| --- | ---: | ---: | ---: |
+| `score_destinations` (6 venues) | 458 | 500 | 583 |
+| `route` market | 625 | 667 | 791 |
+| `route` market, reused plan | 458 | 500 | 625 |
+| `route` passive limit | 458 | 500 | 2792 |
+| `execute` market | 708 | 792 | 958 |
+| `execute` market, reused report | 541 | 625 | 750 |
+| `execute_schedule` TWAP (5 slices) | 3917 | 4167 | 10041 |
+
+The routing decision itself (`score_destinations` + `route`) stays below one
+microsecond through p99.9. The five-slice schedule is reported end-to-end because
+it executes each child against the mutating books.
+
+The same harness also measures how the decision scales with the number of venues
+(cycling the simulated templates):
+
+| venues | p50 | p99 |
+| ---: | ---: | ---: |
+| 6 | 625 | 750 |
+| 12 | 1166 | 1291 |
+| 24 | 2208 | 4541 |
+| 48 | 4500 | 4750 |
+| 96 | 8667 | 9000 |
+
+Cost grows roughly linearly at ~90 ns per venue on this machine, dominated by
+per-venue scoring plus the ranking sort. Even at 96 venues p99 is under 10 µs.
+
 ## Building and Running
 ### Prerequisites
 In order to run the project you will need cargo and rust installed on your machine. Use your prefered methods to set up the rust development environment.

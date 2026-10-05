@@ -1,14 +1,8 @@
-#[macro_use]
-mod log;
-mod exchange;
-mod fix;
-mod interfaces;
-mod order;
-use std::sync::Arc;
-
-use interfaces::client::FixMsgClient;
-use interfaces::server::FixMsgServer;
+use rusty_prism::interfaces::client::FixMsgClient;
+use rusty_prism::interfaces::server::FixMsgServer;
+use rusty_prism::{log_debug, log_error};
 use std::env;
+use std::sync::Arc;
 use tokio::task;
 
 async fn run_server_task(seconds: u64) {

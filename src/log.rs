@@ -68,27 +68,31 @@ lazy_static::lazy_static! {
     pub static ref LOGGER: Logger<std::io::Stdout> = Logger::new(std::io::stdout());
 }
 
+#[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Info, format_args!($($arg)*), module_path!())
+        $crate::log::LOGGER.log($crate::log::LogLevel::Info, format_args!($($arg)*), module_path!())
     };
 }
 
+#[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Warn, format_args!($($arg)*), module_path!())
+        $crate::log::LOGGER.log($crate::log::LogLevel::Warn, format_args!($($arg)*), module_path!())
     };
 }
 
+#[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Error, format_args!($($arg)*), module_path!())
+        $crate::log::LOGGER.log($crate::log::LogLevel::Error, format_args!($($arg)*), module_path!())
     };
 }
 
+#[macro_export]
 macro_rules! log_debug {
     ($($arg:tt)*) => {
-        crate::log::LOGGER.log(crate::log::LogLevel::Debug, format_args!($($arg)*), module_path!())
+        $crate::log::LOGGER.log($crate::log::LogLevel::Debug, format_args!($($arg)*), module_path!())
     };
 }
 
