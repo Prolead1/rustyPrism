@@ -47,6 +47,10 @@ pub struct ScoringContext<'a> {
     pub queue: &'a QueueModel,
     /// Band around the reference price that counts as "implied liquidity".
     pub liquidity_band_bps: i64,
+    /// Pre-computed lower bound of the implied-liquidity band.
+    pub band_lower: Fixed,
+    /// Pre-computed upper bound of the implied-liquidity band.
+    pub band_upper: Fixed,
     /// Latency at which a quote has a 1/e chance of being stale.
     pub latency_decay_us: i64,
 }
@@ -77,6 +81,7 @@ pub struct VenueScore {
 
 impl VenueScore {
     /// Weighted expected cost in milli-basis-points (lower is better).
+    #[inline]
     pub fn total_cost_millibps(&self, weights: &ScoreWeights) -> i64 {
         (self.slippage_millibps * weights.slippage) / MILLI_BPS
             + (self.net_fee_millibps * weights.fees) / MILLI_BPS
@@ -92,6 +97,7 @@ impl VenueScore {
 /// For marketable orders the book is swept and slippage, impact and depth are
 /// measured directly. For passive orders the expected fill is at the limit and
 /// the fill probability is derived from queue dynamics.
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn score_venue(
     venue: &Venue,
@@ -136,7 +142,7 @@ pub fn score_venue(
     };
 
     let liquidity_available =
-        book.implied_liquidity(side, context.liquidity_band_bps, reference_price);
+        book.implied_liquidity_bounds(side, context.band_lower, context.band_upper);
     let liquidity_coverage_ppm = if qty.raw() > 0 {
         liquidity_available.ratio_ppm(qty).clamp(0, PPM)
     } else {
@@ -246,11 +252,15 @@ mod tests {
         impact: &'a ImpactParams,
         queue: &'a QueueModel,
     ) -> ScoringContext<'a> {
+        let reference = Fixed::from_f64(100.0);
+        let band = reference.apply_bps(20);
         ScoringContext {
             weights,
             impact,
             queue,
             liquidity_band_bps: 20,
+            band_lower: reference - band,
+            band_upper: reference + band,
             latency_decay_us: 500,
         }
     }

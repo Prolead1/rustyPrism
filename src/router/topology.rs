@@ -38,6 +38,13 @@ impl Lcg {
     pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
         lo + (hi - lo) * self.next_f64()
     }
+
+    /// Standard normal sample (Box-Muller).
+    pub fn normal(&mut self) -> f64 {
+        let u1 = self.range(1e-9, 1.0);
+        let u2 = self.next_f64();
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+    }
 }
 
 /// Blueprint for a simulated venue.
@@ -194,7 +201,7 @@ pub fn simulated_topology_with_levels(
 }
 
 /// Build one symbol's book around `reference_price`.
-fn build_book(
+pub(crate) fn build_book(
     reference_price: f64,
     spread_bps: f64,
     touch_depth: f64,

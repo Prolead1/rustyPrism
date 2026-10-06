@@ -27,7 +27,7 @@ impl<T: Write> Logger<T> {
 
     pub fn log(&self, level: LogLevel, args: Arguments, module: &'static str) {
         let log_level = get_log_level();
-        let module = module.splitn(2, "::").nth(1).unwrap_or(module);
+        let module = module.split_once("::").map(|x| x.1).unwrap_or(module);
 
         if level as u8 >= log_level as u8 {
             let elapsed = self.start_time.elapsed();

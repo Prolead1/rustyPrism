@@ -45,6 +45,7 @@ impl Fixed {
         self.0
     }
 
+    #[inline]
     pub fn from_f64(value: f64) -> Self {
         Fixed((value * SCALE as f64).round() as i64)
     }
@@ -53,14 +54,17 @@ impl Fixed {
         self.0 as f64 / SCALE as f64
     }
 
+    #[inline]
     pub const fn is_zero(self) -> bool {
         self.0 == 0
     }
 
+    #[inline]
     pub const fn is_positive(self) -> bool {
         self.0 > 0
     }
 
+    #[inline]
     pub const fn min(self, other: Self) -> Self {
         if self.0 < other.0 {
             self
@@ -69,6 +73,7 @@ impl Fixed {
         }
     }
 
+    #[inline]
     pub const fn max(self, other: Self) -> Self {
         if self.0 > other.0 {
             self
@@ -78,11 +83,15 @@ impl Fixed {
     }
 
     /// Fixed-point multiply: `(a * b) / SCALE`.
+    #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, rhs: Self) -> Self {
         Fixed(((self.0 as i128 * rhs.0 as i128) / SCALE_I128) as i64)
     }
 
     /// Fixed-point divide: `(a * SCALE) / b`.
+    #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn div(self, rhs: Self) -> Self {
         if rhs.0 == 0 {
             return Fixed::ZERO;
@@ -91,6 +100,7 @@ impl Fixed {
     }
 
     /// Ratio `self / rhs` expressed in parts-per-million.
+    #[inline]
     pub fn ratio_ppm(self, rhs: Self) -> i64 {
         if rhs.0 == 0 {
             return 0;
@@ -99,11 +109,13 @@ impl Fixed {
     }
 
     /// Apply a basis-point adjustment: `self * bps / 10_000`.
+    #[inline]
     pub fn apply_bps(self, bps: i64) -> Self {
         Fixed((self.0 * bps) / BPS)
     }
 
     /// Clamp to the inclusive `[lo, hi]` range.
+    #[inline]
     pub fn clamp(self, lo: Fixed, hi: Fixed) -> Self {
         if self.0 < lo.0 {
             lo
@@ -155,6 +167,7 @@ impl std::fmt::Display for Fixed {
 }
 
 /// Signed difference `value - reference` expressed in milli-basis-points.
+#[inline]
 pub fn diff_millibps(value: Fixed, reference: Fixed) -> i64 {
     if reference.0 == 0 {
         return 0;
@@ -163,6 +176,7 @@ pub fn diff_millibps(value: Fixed, reference: Fixed) -> i64 {
 }
 
 /// Fixed-point square root of a non-negative dimensionless `Fixed`.
+#[inline]
 pub fn sqrt_fixed(value: Fixed) -> Fixed {
     if value.0 <= 0 {
         return Fixed::ZERO;
@@ -176,7 +190,7 @@ pub fn isqrt_u64(value: u64) -> u64 {
         return value;
     }
     let mut x = value;
-    let mut y = (x + 1) / 2;
+    let mut y = x.div_ceil(2);
     while y < x {
         x = y;
         y = (x + value / x) / 2;
@@ -189,6 +203,7 @@ pub fn isqrt_u64(value: u64) -> u64 {
 /// Uses the monotone rational approximation `P = x / (1 + x)` for `1 - e^-x`
 /// so the model stays entirely in integer arithmetic. It matches the
 /// exponential for small `x` and saturates to one as `x` grows.
+#[inline]
 pub fn fill_probability_ppm(intensity: Fixed) -> i64 {
     let intensity = intensity.raw().max(0) as i128;
     ((intensity * PPM as i128) / (SCALE_I128 + intensity)) as i64
@@ -198,6 +213,7 @@ pub fn fill_probability_ppm(intensity: Fixed) -> i64 {
 ///
 /// Same rational approximation as [`fill_probability_ppm`] applied to
 /// `1 / (1 + latency / decay)`.
+#[inline]
 pub fn quote_validity_ppm(latency_us: u32, decay_us: i64) -> i64 {
     if decay_us <= 0 {
         return PPM;

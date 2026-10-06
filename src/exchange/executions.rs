@@ -19,11 +19,11 @@ impl ExecutionList {
     pub fn insert(&mut self, execution_id: usize, execution: (Order, Order)) {
         self.lookup
             .entry(execution.0.id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(execution_id);
         self.lookup
             .entry(execution.1.id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(execution_id);
         self.matches.insert(execution_id, execution);
     }

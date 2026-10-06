@@ -160,8 +160,8 @@ impl VenueBook {
 
     /// Build a book from arbitrary level collections, sorting to best-first.
     pub fn from_levels(mut bids: Vec<PriceLevel>, mut asks: Vec<PriceLevel>) -> Self {
-        bids.sort_by(|a, b| b.price.cmp(&a.price));
-        asks.sort_by(|a, b| a.price.cmp(&b.price));
+        bids.sort_by_key(|level| std::cmp::Reverse(level.price));
+        asks.sort_by_key(|level| level.price);
         VenueBook { bids, asks }
     }
 
@@ -282,16 +282,25 @@ impl VenueBook {
             return Fixed::ZERO;
         }
         let offset = reference_price.apply_bps(band_bps);
+        self.implied_liquidity_bounds(side, reference_price - offset, reference_price + offset)
+    }
+
+    /// Implied liquidity using pre-computed band bounds.
+    ///
+    /// The bounds are constant for a whole order, so callers can compute them
+    /// once instead of running a basis-point division per venue.
+    #[inline]
+    pub fn implied_liquidity_bounds(&self, side: Side, lower: Fixed, upper: Fixed) -> Fixed {
         match side {
             Side::Buy => self
                 .asks
                 .iter()
-                .filter(|level| level.price <= reference_price + offset)
+                .filter(|level| level.price <= upper)
                 .fold(Fixed::ZERO, |acc, level| acc + level.size),
             Side::Sell => self
                 .bids
                 .iter()
-                .filter(|level| level.price >= reference_price - offset)
+                .filter(|level| level.price >= lower)
                 .fold(Fixed::ZERO, |acc, level| acc + level.size),
         }
     }
@@ -349,7 +358,7 @@ impl Venue {
     }
 
     pub fn with_fee_tiers(mut self, mut tiers: Vec<FeeTier>) -> Self {
-        tiers.sort_by(|a, b| a.min_monthly_volume.cmp(&b.min_monthly_volume));
+        tiers.sort_by_key(|a| a.min_monthly_volume);
         self.fee_tiers = tiers;
         self
     }
@@ -362,9 +371,14 @@ impl Venue {
     }
 
     pub fn with_book(mut self, symbol: SymbolId, book: VenueBook) -> Self {
+        self.set_book(symbol, book);
+        self
+    }
+
+    /// Replace or insert a symbol's book in place.
+    pub fn set_book(&mut self, symbol: SymbolId, book: VenueBook) {
         self.ensure_books(symbol);
         self.books[symbol as usize] = Some(book);
-        self
     }
 
     pub fn book(&self, symbol: SymbolId) -> Option<&VenueBook> {

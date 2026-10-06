@@ -36,3 +36,9 @@ impl FixMsgServer {
         FixMsgProcessor::create_processor(processor_receiver_queue, processor_sender_queue).await;
     }
 }
+
+impl Default for FixMsgServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}

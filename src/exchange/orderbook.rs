@@ -23,17 +23,11 @@ impl OrderBook {
 
         match side {
             Side::Buy => {
-                let buy_orders = self
-                    .buy_orders
-                    .entry(symbol.to_string())
-                    .or_insert(OrderedSkipList::new());
+                let buy_orders = self.buy_orders.entry(symbol.to_string()).or_default();
                 buy_orders.insert(order);
             }
             Side::Sell => {
-                let sell_orders = self
-                    .sell_orders
-                    .entry(symbol.to_string())
-                    .or_insert(OrderedSkipList::new());
+                let sell_orders = self.sell_orders.entry(symbol.to_string()).or_default();
                 sell_orders.insert(order);
             }
         }

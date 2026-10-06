@@ -85,6 +85,15 @@ pub struct RoutePlan {
 }
 
 impl RoutePlan {
+    /// Create a plan with room for `venue_count` scores and allocations.
+    pub fn with_capacity(venue_count: usize) -> Self {
+        RoutePlan {
+            allocations: Vec::with_capacity(venue_count),
+            scores: Vec::with_capacity(venue_count),
+            ..RoutePlan::default()
+        }
+    }
+
     /// Reset the plan while retaining the capacity of its vectors.
     pub fn clear(&mut self) {
         self.allocations.clear();
@@ -345,11 +354,16 @@ impl SmartOrderRouter {
         out: &mut Vec<VenueScore>,
     ) {
         out.clear();
+        // The implied-liquidity band is constant for the whole order, so build
+        // its bounds once rather than per venue.
+        let half_band = req.arrival_price.apply_bps(self.config.liquidity_band_bps);
         let context = ScoringContext {
             weights: &self.config.weights,
             impact: &self.config.impact,
             queue: &self.config.queue,
             liquidity_band_bps: self.config.liquidity_band_bps,
+            band_lower: req.arrival_price - half_band,
+            band_upper: req.arrival_price + half_band,
             latency_decay_us: self.config.latency_decay_us,
         };
         for venue in &self.venues {
@@ -437,7 +451,7 @@ impl SmartOrderRouter {
 
     /// Convenience wrapper that allocates a fresh plan.
     pub fn route(&mut self, req: &OrderRequest) -> RoutePlan {
-        let mut plan = RoutePlan::default();
+        let mut plan = RoutePlan::with_capacity(self.venues.len());
         let symbol = self.symbols.id(&req.symbol).unwrap_or(u32::MAX);
         self.route_into(req, symbol, &mut plan);
         plan
@@ -520,7 +534,10 @@ impl SmartOrderRouter {
 
     /// Convenience wrapper that allocates a fresh report.
     pub fn execute(&mut self, req: &OrderRequest) -> ExecutionReport {
-        let mut report = ExecutionReport::default();
+        let mut report = ExecutionReport {
+            plan: RoutePlan::with_capacity(self.venues.len()),
+            ..ExecutionReport::default()
+        };
         let symbol = self.symbols.id(&req.symbol).unwrap_or(u32::MAX);
         self.execute_into(req, symbol, &mut report);
         report
