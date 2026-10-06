@@ -233,43 +233,47 @@ flowchart LR
     P1["producer thread 1"] --> Q
     P2["producer thread 2"] --> Q
     P3["producer thread n"] --> Q
-    Q["ingress queue<br/>bounded MPSC (backpressure)"] --> I["ingester thread<br/>translate raw → command"]
+    Q["ingress queue<br/>lock-free MPSC (ArrayQueue)"] --> I["ingester thread<br/>drain + translate (batched)"]
     I --> R["SPSC ring buffer<br/>lock-free · pre-allocated · padded"]
-    R --> C["core thread<br/>EventHandler"]
+    R --> C["core thread<br/>consume + on_batch"]
     C --> H["SmartOrderRouter<br/>single writer, in order"]
     H -.->|"ExecutionReport"| P1
 ```
 
-- **Ingress** is a bounded multi-producer channel: bursts are absorbed and
-  producers feel backpressure instead of growing memory without bound.
-- **Ingester** translates raw input into typed commands and publishes them to
-  the ring, preserving arrival order.
+- **Ingress** is a bounded, lock-free multi-producer queue
+  ([`crossbeam_queue::ArrayQueue`]). Bursts are absorbed and producers feel
+  backpressure instead of growing memory without bound.
+- **Ingester** drains ingress in batches, translates raw input into typed
+  commands, and publishes them to the ring, preserving arrival order.
 - **Ring** is a lock-free SPSC buffer: no locks, no allocation after startup,
   `head`/`tail` padded onto separate cache lines, acquire/release publication.
-- **Core** consumes commands in strict order and runs the router, so the
-  business logic stays deterministic even though submitters are concurrent.
+- **Core** consumes commands in strict order and dispatches them via
+  `EventHandler::on_batch`, so business logic stays deterministic even though
+  submitters are concurrent.
 
-`WaitStrategy` chooses between `Yield` (lower CPU) and `BusySpin` (lower p50
-tail when threads are pinned to dedicated cores). The topology is generic over
-command type and handler, so the exchange side can adopt the same structure
-with its own `EventHandler`.
+Both threads **spin rather than park**, removing the scheduler wake-up that
+otherwise dominates the round trip. `WaitStrategy` chooses `Yield` (lower CPU)
+or `BusySpin` (lowest tail). `pin_threads` assigns the ingester and core to
+dedicated cores where the platform supports it (best-effort; see
+`available_core_ids`). The topology is generic over command type and handler, so
+the exchange side can adopt the same structure with its own `EventHandler`.
 
 ```bash
 cargo run --release --example pipeline_demo
 ```
 
-Measured round trip (submit → ingress → ring → core → reply, including two
-thread hops and the reply channel), release build:
+Measured round trip (submit → ingress → ring → core → reply, release build):
 
-| wait strategy | p50 | p99 |
-| --- | ---: | ---: |
-| `Yield` | 5.5 µs | ~44 µs |
-| `BusySpin` | 4.7 µs | ~45 µs |
+| wait strategy | p50 | p99 | p99.9 |
+| --- | ---: | ---: | ---: |
+| `Yield` | 1.2 µs | 5.7 µs | ~49 µs |
+| `BusySpin` | 1.1 µs | 3.4 µs | ~15 µs |
 
-The gulf between p50 and p99 is OS scheduling: on a shared machine the tail is
-dominated by thread wake-up latency, which is why a production deployment pins
-the ingester and core to isolated cores. The pure routing decision itself stays
-sub-microsecond (see the table above).
+Fire-and-forget throughput: **~2.8–3.0M orders/sec**. The first iteration of this
+pipeline used `std::sync::mpsc` with blocking `recv` and measured 5.5 µs p50 /
+44 µs p99 — switching to a lock-free ingress queue, spin waits and batching cut
+the round trip roughly 5x and the p99 by more than 10x. The pure routing decision
+itself remains sub-microsecond (see the table above).
 
 ### Continuous integration
 

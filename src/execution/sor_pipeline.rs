@@ -11,14 +11,15 @@
 //!          └──────────────── ExecutionReport (reply) ───────────┘
 //! ```
 
-use crate::disruptor::{EventHandler, PipelineConfig, PipelineHandle};
+use crate::disruptor::{EventHandler, IngressSender, PipelineConfig, PipelineHandle, PublishError};
 use crate::router::sor::{ExecutionReport, OrderRequest, SmartOrderRouter};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, SendError, SyncSender, TrySendError};
+use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
 use std::sync::Arc;
 
 /// A unit of work for the core: an order plus an optional reply channel.
+#[derive(Debug)]
 pub struct SorCommand {
     pub request: OrderRequest,
     pub reply: Option<SyncSender<ExecutionReport>>,
@@ -82,6 +83,15 @@ impl fmt::Display for SubmitError {
 
 impl std::error::Error for SubmitError {}
 
+impl From<PublishError<SorCommand>> for SubmitError {
+    fn from(error: PublishError<SorCommand>) -> Self {
+        match error {
+            PublishError::Full(_) => SubmitError::Full,
+            PublishError::Closed(_) => SubmitError::Closed,
+        }
+    }
+}
+
 /// A running SOR pipeline.
 pub struct SorPipeline {
     handle: PipelineHandle<SorCommand>,
@@ -100,25 +110,36 @@ impl SorPipeline {
         SorPipeline { handle, processed }
     }
 
-    /// Submit an order and block until the core returns its report.
+    /// Submit an order and wait for the core to return its report.
+    ///
+    /// The caller spins rather than parking, so the round trip does not pay a
+    /// scheduler wake-up on the reply path.
     pub fn submit(&self, request: OrderRequest) -> Result<ExecutionReport, SubmitError> {
         let (reply_tx, reply_rx) = sync_channel(1);
         self.handle
-            .publish(SorCommand::with_reply(request, reply_tx))
-            .map_err(|_| SubmitError::Closed)?;
-        reply_rx.recv().map_err(|_| SubmitError::Dropped)
+            .publish(SorCommand::with_reply(request, reply_tx))?;
+        let mut spins = 0u32;
+        loop {
+            match reply_rx.try_recv() {
+                Ok(report) => return Ok(report),
+                Err(TryRecvError::Empty) => {
+                    if spins < 1024 {
+                        std::hint::spin_loop();
+                        spins += 1;
+                    } else {
+                        std::thread::yield_now();
+                    }
+                }
+                Err(TryRecvError::Disconnected) => return Err(SubmitError::Dropped),
+            }
+        }
     }
 
-    /// Submit without blocking on the reply (returns once queued).
+    /// Submit without waiting for the reply (returns once queued).
     pub fn try_submit(&self, request: OrderRequest) -> Result<(), SubmitError> {
-        match self
-            .handle
+        self.handle
             .try_publish(SorCommand::fire_and_forget(request))
-        {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(SubmitError::Full),
-            Err(TrySendError::Disconnected(_)) => Err(SubmitError::Closed),
-        }
+            .map_err(SubmitError::from)
     }
 
     /// Number of commands processed by the core so far.
@@ -127,13 +148,13 @@ impl SorPipeline {
     }
 
     /// Clone the ingress sender to submit from another thread.
-    pub fn sender(&self) -> SyncSender<SorCommand> {
+    pub fn sender(&self) -> IngressSender<SorCommand> {
         self.handle.sender()
     }
 
-    /// Submit a raw command through a cloned sender.
-    pub fn send(&self, command: SorCommand) -> Result<(), SendError<SorCommand>> {
-        self.handle.publish(command)
+    /// Submit a raw command through the ingress sender.
+    pub fn send(&self, command: SorCommand) -> Result<(), SubmitError> {
+        self.handle.publish(command).map_err(SubmitError::from)
     }
 
     /// Drain and stop the pipeline.

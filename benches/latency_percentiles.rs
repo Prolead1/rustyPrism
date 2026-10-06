@@ -182,6 +182,7 @@ fn measure_pipeline_roundtrip(
             ring_capacity: 1024,
             input_capacity: 1024,
             wait_strategy,
+            ..PipelineConfig::default()
         },
     );
     let request = market_request();
@@ -196,6 +197,40 @@ fn measure_pipeline_roundtrip(
     }
     pipeline.shutdown();
     samples
+}
+
+/// Throughput of fire-and-forget submissions, orders per second.
+fn measure_pipeline_throughput(orders: usize, batch_size: usize) -> f64 {
+    let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, SEED);
+    let pipeline = SorPipeline::spawn(
+        router,
+        PipelineConfig {
+            ring_capacity: 8192,
+            input_capacity: 8192,
+            batch_size,
+            wait_strategy: WaitStrategy::Yield,
+            pin_threads: false,
+        },
+    );
+    let request = market_request();
+    let sender = pipeline.sender();
+    let start = Instant::now();
+    for _ in 0..orders {
+        sender
+            .send(rusty_prism::execution::SorCommand::fire_and_forget(
+                request.clone(),
+            ))
+            .unwrap();
+    }
+    let mut spins = 0u64;
+    while pipeline.processed() < orders as u64 {
+        std::thread::yield_now();
+        spins += 1;
+        assert!(spins < 100_000_000, "core did not drain");
+    }
+    let elapsed = start.elapsed();
+    pipeline.shutdown();
+    orders as f64 / elapsed.as_secs_f64()
 }
 
 /// Build a router with `venue_count` venues by cycling the simulated templates.
@@ -322,6 +357,12 @@ fn main() {
         measure_pipeline_roundtrip(50_000, 5_000, WaitStrategy::BusySpin),
     );
     print_row(&stats);
+
+    println!("\nPipeline throughput (fire-and-forget, orders/sec)");
+    for batch_size in [1usize, 64, 256] {
+        let rate = measure_pipeline_throughput(200_000, batch_size);
+        println!("  batch_size={:<5} {:>12.0} orders/sec", batch_size, rate);
+    }
 
     println!("\nRouting-decision scaling with venue count (route market)");
     print_header();

@@ -21,15 +21,26 @@ fn main() {
 
     let router = SmartOrderRouter::simulated(&["AAPL"], 100.0, 42);
     let config = PipelineConfig {
-        ring_capacity: 1024,
-        input_capacity: 1024,
+        ring_capacity: 8192,
+        input_capacity: 8192,
+        batch_size: 64,
+        pin_threads: true,
         ..PipelineConfig::default()
     };
     let pipeline = Arc::new(SorPipeline::spawn(router, config));
 
     println!(
-        "Disruptor pipeline: {} producers x {} orders (ingress {} / ring {})",
-        producers, orders_per_producer, config.input_capacity, config.ring_capacity
+        "Disruptor pipeline: {} producers x {} orders (ingress {} / ring {} / batch {})",
+        producers,
+        orders_per_producer,
+        config.input_capacity,
+        config.ring_capacity,
+        config.batch_size
+    );
+    println!(
+        "pinning requested: {} (cores visible to affinity layer: {})",
+        config.pin_threads,
+        rusty_prism::disruptor::available_core_ids()
     );
 
     let start = Instant::now();

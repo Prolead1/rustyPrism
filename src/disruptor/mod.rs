@@ -20,5 +20,8 @@
 pub mod pipeline;
 pub mod ring;
 
-pub use pipeline::{spawn, EventHandler, PipelineConfig, PipelineHandle, WaitStrategy};
+pub use pipeline::{
+    available_core_ids, spawn, EventHandler, IngressSender, PipelineConfig, PipelineHandle,
+    PublishError, WaitStrategy,
+};
 pub use ring::{spsc, Consumer, Producer};

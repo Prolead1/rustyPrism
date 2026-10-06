@@ -1,34 +1,51 @@
 //! The Disruptor pipeline: ingress queue → ingester thread → SPSC ring →
 //! core handler thread.
 //!
-//! The pipeline separates two concerns that LMAX calls the *upstream* and the
-//! *business logic*:
+//! This separates two concerns that LMAX calls the *upstream* and the *business
+//! logic*:
 //!
-//! 1. **Ingress** is a bounded multi-producer channel. Network/FIX threads may
-//!    publish raw input concurrently; when it fills, producers feel
-//!    backpressure instead of unbounded memory growth.
-//! 2. **Ingester** is a single thread that drains the ingress queue, translates
-//!    raw input into typed commands, and publishes them into the ring buffer.
+//! 1. **Ingress** is a bounded, lock-free multi-producer queue
+//!    ([`crossbeam_queue::ArrayQueue`]). Network/FIX threads may publish
+//!    concurrently; when it fills, producers feel backpressure instead of
+//!    unbounded memory growth.
+//! 2. **Ingester** is a single thread that drains the ingress queue in batches,
+//!    translates raw input into typed commands, and publishes them into the
+//!    ring.
 //! 3. **Core** is a single thread that consumes the ring in strict publication
-//!    order and invokes the [`EventHandler`]. Running the business logic on one
-//!    thread keeps it deterministic and free of data races.
+//!    order and invokes the [`EventHandler`], also in batches. Running the
+//!    business logic on one thread keeps it deterministic and data-race free.
 //!
-//! The ring is a [`super::ring`] lock-free SPSC buffer: pre-allocated, padded
-//! and allocation-free on the hot path.
-//!
-//! The same `spawn` works for any command/handler pair, so a future exchange
-//! process can reuse the topology with its own handler.
+//! Both threads wait with a configurable [`WaitStrategy`] instead of parking,
+//! which removes the scheduler wake-up latency that dominated the earlier
+//! `std::sync::mpsc` implementation. When `pin_threads` is enabled the ingester
+//! and core are also assigned to dedicated cores (best-effort; see
+//! [`available_core_ids`]).
 
 use super::ring::{spsc, Consumer, Producer};
-use std::sync::mpsc::{sync_channel, Receiver, SendError, SyncSender, TrySendError};
+use core_affinity::CoreId;
+use crossbeam_queue::ArrayQueue;
+use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-/// Business logic invoked on the core thread for every command, in order.
+/// Business logic invoked on the core thread.
 pub trait EventHandler<E>: Send {
+    /// Handle a single command.
     fn on_event(&mut self, event: &E);
+
+    /// Handle a batch of commands in publication order.
+    ///
+    /// The default simply forwards to [`EventHandler::on_event`]; handlers that
+    /// can amortise work across a batch should override it.
+    fn on_batch(&mut self, events: &[E]) {
+        for event in events {
+            self.on_event(event);
+        }
+    }
 }
 
-/// How idle threads wait for the other side of the pipeline.
+/// How idle threads wait for work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitStrategy {
     /// Spin without yielding: lowest latency and tail, burns a core.
@@ -37,15 +54,19 @@ pub enum WaitStrategy {
     Yield,
 }
 
-/// Pipeline sizing and wait policy.
+/// Pipeline sizing and runtime policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PipelineConfig {
     /// SPSC ring capacity; rounded up to a power of two.
     pub ring_capacity: usize,
-    /// Ingress channel capacity (maximum in-flight raw inputs).
+    /// Ingress queue capacity (maximum in-flight raw inputs).
     pub input_capacity: usize,
+    /// Maximum commands processed per core dispatch / publish per ingest pass.
+    pub batch_size: usize,
     /// Wait strategy used by the ingester and core threads.
     pub wait_strategy: WaitStrategy,
+    /// Best-effort pinning of the ingester and core to dedicated cores.
+    pub pin_threads: bool,
 }
 
 impl Default for PipelineConfig {
@@ -53,50 +74,114 @@ impl Default for PipelineConfig {
         PipelineConfig {
             ring_capacity: 1024,
             input_capacity: 1024,
+            batch_size: 64,
             wait_strategy: WaitStrategy::Yield,
+            pin_threads: false,
         }
     }
 }
 
-/// Handle to a running pipeline. Clone its [`sender`](Self::sender) to fan in
-/// from multiple producer threads.
+/// Why a publish was rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublishError<I> {
+    /// The ingress queue is full.
+    Full(I),
+    /// The pipeline is shutting down.
+    Closed(I),
+}
+
+impl<I> PublishError<I> {
+    /// Recover the value that could not be published.
+    pub fn into_inner(self) -> I {
+        match self {
+            PublishError::Full(value) | PublishError::Closed(value) => value,
+        }
+    }
+}
+
+/// Cloneable, multi-producer ingress handle.
+pub struct IngressSender<I> {
+    queue: Arc<ArrayQueue<I>>,
+    closed: Arc<AtomicBool>,
+    wait_strategy: WaitStrategy,
+}
+
+impl<I> Clone for IngressSender<I> {
+    fn clone(&self) -> Self {
+        IngressSender {
+            queue: Arc::clone(&self.queue),
+            closed: Arc::clone(&self.closed),
+            wait_strategy: self.wait_strategy,
+        }
+    }
+}
+
+impl<I> IngressSender<I> {
+    /// Publish, spinning with backoff while the queue is full.
+    pub fn send(&self, input: I) -> Result<(), PublishError<I>> {
+        let mut input = input;
+        let mut spins = 0u32;
+        loop {
+            if self.closed.load(Ordering::Acquire) {
+                return Err(PublishError::Closed(input));
+            }
+            match self.queue.push(input) {
+                Ok(()) => return Ok(()),
+                Err(returned) => {
+                    input = returned;
+                    wait(self.wait_strategy, &mut spins);
+                }
+            }
+        }
+    }
+
+    /// Publish without blocking.
+    pub fn try_send(&self, input: I) -> Result<(), PublishError<I>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(PublishError::Closed(input));
+        }
+        self.queue.push(input).map_err(PublishError::Full)
+    }
+
+    /// Number of inputs currently queued.
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+}
+
+/// Handle to a running pipeline. Clone [`sender`](Self::sender) to fan in from
+/// multiple producer threads.
 pub struct PipelineHandle<I> {
-    input: Option<SyncSender<I>>,
+    sender: IngressSender<I>,
     ingester: Option<JoinHandle<()>>,
     core: Option<JoinHandle<()>>,
 }
 
-impl<I: Send + 'static> PipelineHandle<I> {
-    /// Clone the ingress sender for another producer thread.
-    pub fn sender(&self) -> SyncSender<I> {
-        self.input
-            .as_ref()
-            .expect("pipeline already shut down")
-            .clone()
+impl<I> PipelineHandle<I> {
+    /// Cloneable ingress sender for another producer thread.
+    pub fn sender(&self) -> IngressSender<I> {
+        self.sender.clone()
     }
 
     /// Publish raw input, blocking while the ingress queue is full.
-    pub fn publish(&self, input: I) -> Result<(), SendError<I>> {
-        self.input
-            .as_ref()
-            .expect("pipeline already shut down")
-            .send(input)
+    pub fn publish(&self, input: I) -> Result<(), PublishError<I>> {
+        self.sender.send(input)
     }
 
-    /// Publish raw input without blocking; returns it back if the queue is full.
-    pub fn try_publish(&self, input: I) -> Result<(), TrySendError<I>> {
-        self.input
-            .as_ref()
-            .expect("pipeline already shut down")
-            .try_send(input)
+    /// Publish raw input without blocking.
+    pub fn try_publish(&self, input: I) -> Result<(), PublishError<I>> {
+        self.sender.try_send(input)
     }
 
-    /// Close the ingress queue and wait for both threads to drain and exit.
+    /// Close ingress and wait for both threads to drain and exit.
+    ///
+    /// Call only after all producer threads have stopped sending.
     pub fn shutdown(mut self) {
-        // Dropping the sender closes the ingress channel, which causes the
-        // ingester to publish the shutdown sentinel and terminate. The core
-        // then drains the ring and exits.
-        self.input = None;
+        self.sender.closed.store(true, Ordering::Release);
         if let Some(ingester) = self.ingester.take() {
             let _ = ingester.join();
         }
@@ -106,10 +191,14 @@ impl<I: Send + 'static> PipelineHandle<I> {
     }
 }
 
+/// Number of logical cores the affinity layer can see (0 if unsupported).
+pub fn available_core_ids() -> usize {
+    core_affinity::get_core_ids()
+        .map(|ids| ids.len())
+        .unwrap_or(0)
+}
+
 /// Spawn a pipeline with the given configuration, core handler and translator.
-///
-/// `translate` runs on the ingester thread and turns each raw input into a
-/// typed command. The handler runs on the core thread in publication order.
 pub fn spawn<I, C, H, T>(config: PipelineConfig, handler: H, mut translate: T) -> PipelineHandle<I>
 where
     I: Send + 'static,
@@ -117,45 +206,124 @@ where
     H: EventHandler<C> + 'static,
     T: FnMut(I) -> C + Send + 'static,
 {
-    let (input_tx, input_rx) = sync_channel::<I>(config.input_capacity.max(1));
+    let queue = Arc::new(ArrayQueue::new(config.input_capacity.max(1)));
+    let closed = Arc::new(AtomicBool::new(false));
     let (producer, consumer) = spsc::<Option<C>>(config.ring_capacity.max(2));
 
-    let wait_strategy = config.wait_strategy;
+    let (ingester_core, core_core) = pinning_plan(config.pin_threads);
+    let strategy = config.wait_strategy;
+    let batch_size = config.batch_size.max(1);
+
+    let ingester_queue = Arc::clone(&queue);
+    let ingester_closed = Arc::clone(&closed);
     let ingester = thread::Builder::new()
         .name("disruptor-ingest".to_string())
-        .spawn(move || ingest_loop(input_rx, producer, &mut translate, wait_strategy))
+        .spawn(move || {
+            ingest_loop(
+                ingester_queue,
+                ingester_closed,
+                producer,
+                &mut translate,
+                strategy,
+                batch_size,
+                ingester_core,
+            )
+        })
         .expect("failed to spawn ingester thread");
 
     let core = thread::Builder::new()
         .name("disruptor-core".to_string())
-        .spawn(move || core_loop(consumer, handler, wait_strategy))
+        .spawn(move || core_loop(consumer, handler, strategy, batch_size, core_core))
         .expect("failed to spawn core thread");
 
     PipelineHandle {
-        input: Some(input_tx),
+        sender: IngressSender {
+            queue,
+            closed,
+            wait_strategy: strategy,
+        },
         ingester: Some(ingester),
         core: Some(core),
     }
 }
 
-/// Drain ingress, translate, and publish to the ring until the channel closes.
+/// Pick dedicated cores for the ingester and core if the platform supports it.
+fn pinning_plan(enabled: bool) -> (Option<CoreId>, Option<CoreId>) {
+    if !enabled {
+        return (None, None);
+    }
+    match core_affinity::get_core_ids() {
+        Some(cores) if !cores.is_empty() => {
+            let count = cores.len();
+            // Leave core 0 for the OS and producers.
+            let ingester = cores[1 % count];
+            let core = cores[(2 % count).max(1).min(count - 1)];
+            (Some(ingester), Some(core))
+        }
+        _ => (None, None),
+    }
+}
+
+/// Drain ingress in batches, translate, and publish to the ring until closed.
 fn ingest_loop<I, C, T>(
-    input_rx: Receiver<I>,
+    ingress: Arc<ArrayQueue<I>>,
+    closed: Arc<AtomicBool>,
     producer: Producer<Option<C>>,
     translate: &mut T,
     strategy: WaitStrategy,
+    batch_size: usize,
+    pin: Option<CoreId>,
 ) where
     I: Send + 'static,
     C: Send + 'static,
     T: FnMut(I) -> C,
 {
-    while let Ok(input) = input_rx.recv() {
-        let command = translate(input);
-        publish_waiting(&producer, Some(command), strategy);
+    if let Some(core) = pin {
+        core_affinity::set_for_current(core);
+    }
+
+    let mut commands: Vec<C> = Vec::with_capacity(batch_size);
+    let mut spins = 0u32;
+    loop {
+        if closed.load(Ordering::Acquire) && ingress.is_empty() {
+            break;
+        }
+        commands.clear();
+        match pop_waiting(&ingress, &closed, strategy, &mut spins) {
+            Some(input) => commands.push(translate(input)),
+            None => break,
+        }
+        while commands.len() < batch_size {
+            match ingress.pop() {
+                Some(input) => commands.push(translate(input)),
+                None => break,
+            }
+        }
+        for command in commands.drain(..) {
+            publish_waiting(&producer, Some(command), strategy);
+        }
     }
     // Ordered shutdown sentinel: the core sees it only after every preceding
     // command has been consumed.
     publish_waiting(&producer, None, strategy);
+}
+
+/// Block (spinning) until an item is available or the pipeline is closed.
+fn pop_waiting<I>(
+    ingress: &ArrayQueue<I>,
+    closed: &AtomicBool,
+    strategy: WaitStrategy,
+    spins: &mut u32,
+) -> Option<I> {
+    loop {
+        if let Some(input) = ingress.pop() {
+            return Some(input);
+        }
+        if closed.load(Ordering::Acquire) && ingress.is_empty() {
+            return None;
+        }
+        wait(strategy, spins);
+    }
 }
 
 /// Publish, honouring the wait strategy while the ring is full.
@@ -176,26 +344,60 @@ where
     }
 }
 
-/// Consume the ring in order and dispatch to the handler until the sentinel.
-fn core_loop<C, H>(consumer: Consumer<Option<C>>, mut handler: H, strategy: WaitStrategy)
-where
+/// Consume the ring in batches and dispatch to the handler until the sentinel.
+fn core_loop<C, H>(
+    consumer: Consumer<Option<C>>,
+    mut handler: H,
+    strategy: WaitStrategy,
+    batch_size: usize,
+    pin: Option<CoreId>,
+) where
     C: Send + 'static,
     H: EventHandler<C>,
 {
+    if let Some(core) = pin {
+        core_affinity::set_for_current(core);
+    }
+
+    let mut batch: Vec<C> = Vec::with_capacity(batch_size);
     let mut spins = 0u32;
     loop {
-        match consumer.try_consume() {
-            Some(Some(command)) => {
-                handler.on_event(&command);
-                spins = 0;
+        batch.clear();
+
+        // Wait for the first command, or the shutdown sentinel.
+        let first = loop {
+            match consumer.try_consume() {
+                Some(Some(command)) => break Some(command),
+                Some(None) => break None,
+                None => wait(strategy, &mut spins),
             }
-            // Shutdown sentinel: the ingester is done and the ring is drained.
-            Some(None) => break,
-            None => wait(strategy, &mut spins),
+        };
+        let Some(command) = first else {
+            break;
+        };
+        batch.push(command);
+
+        // Drain up to a batch without waiting.
+        let mut shutdown = false;
+        while batch.len() < batch_size {
+            match consumer.try_consume() {
+                Some(Some(command)) => batch.push(command),
+                Some(None) => {
+                    shutdown = true;
+                    break;
+                }
+                None => break,
+            }
+        }
+
+        handler.on_batch(&batch);
+        if shutdown {
+            break;
         }
     }
 }
 
+/// Spin briefly, then yield, to balance latency against CPU burn.
 #[inline]
 fn wait(strategy: WaitStrategy, spins: &mut u32) {
     match strategy {
@@ -211,13 +413,21 @@ fn wait(strategy: WaitStrategy, spins: &mut u32) {
     }
 }
 
+impl<I> fmt::Debug for IngressSender<I> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IngressSender")
+            .field("len", &self.queue.len())
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc as StdArc, Mutex};
 
     struct Recorder {
-        seen: Arc<Mutex<Vec<u64>>>,
+        seen: StdArc<Mutex<Vec<u64>>>,
     }
 
     impl EventHandler<u64> for Recorder {
@@ -228,9 +438,9 @@ mod tests {
 
     #[test]
     fn test_pipeline_processes_in_order() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen = StdArc::new(Mutex::new(Vec::new()));
         let handler = Recorder {
-            seen: Arc::clone(&seen),
+            seen: StdArc::clone(&seen),
         };
         let handle = spawn(PipelineConfig::default(), handler, |value: u64| value);
 
@@ -245,9 +455,50 @@ mod tests {
     }
 
     #[test]
+    fn test_batching_dispatches_in_order() {
+        #[derive(Default)]
+        struct BatchRecorder {
+            seen: StdArc<Mutex<Vec<u64>>>,
+            batch_sizes: StdArc<Mutex<Vec<usize>>>,
+        }
+        impl EventHandler<u64> for BatchRecorder {
+            fn on_event(&mut self, event: &u64) {
+                self.seen.lock().unwrap().push(*event);
+            }
+            fn on_batch(&mut self, events: &[u64]) {
+                self.batch_sizes.lock().unwrap().push(events.len());
+                for event in events {
+                    self.seen.lock().unwrap().push(*event);
+                }
+            }
+        }
+
+        let recorder = BatchRecorder::default();
+        let seen = StdArc::clone(&recorder.seen);
+        let batch_sizes = StdArc::clone(&recorder.batch_sizes);
+        let handle = spawn(
+            PipelineConfig {
+                batch_size: 32,
+                ..PipelineConfig::default()
+            },
+            recorder,
+            |value: u64| value,
+        );
+        for value in 0..1_000 {
+            handle.publish(value).unwrap();
+        }
+        handle.shutdown();
+
+        assert!(seen.lock().unwrap().iter().copied().eq(0..1_000));
+        let sizes = batch_sizes.lock().unwrap();
+        assert_eq!(sizes.iter().sum::<usize>(), 1_000);
+        assert!(sizes.iter().any(|&size| size > 1), "no batching observed");
+    }
+
+    #[test]
     fn test_pipeline_translates_input() {
         struct Sum {
-            total: Arc<Mutex<u64>>,
+            total: StdArc<Mutex<u64>>,
         }
         impl EventHandler<u64> for Sum {
             fn on_event(&mut self, event: &u64) {
@@ -255,7 +506,7 @@ mod tests {
             }
         }
 
-        let total = Arc::new(Mutex::new(0));
+        let total = StdArc::new(Mutex::new(0));
         let handle = spawn(
             PipelineConfig {
                 ring_capacity: 16,
@@ -263,7 +514,7 @@ mod tests {
                 ..PipelineConfig::default()
             },
             Sum {
-                total: Arc::clone(&total),
+                total: StdArc::clone(&total),
             },
             |raw: (u64, u64)| raw.0 * raw.1,
         );
@@ -277,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_multiple_producers_fan_in() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen = StdArc::new(Mutex::new(Vec::new()));
         let handle = spawn(
             PipelineConfig {
                 ring_capacity: 256,
@@ -285,7 +536,7 @@ mod tests {
                 ..PipelineConfig::default()
             },
             Recorder {
-                seen: Arc::clone(&seen),
+                seen: StdArc::clone(&seen),
             },
             |value: u64| value,
         );
@@ -306,7 +557,6 @@ mod tests {
 
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 1_000);
-        // Every value delivered exactly once.
         let mut sorted = seen.clone();
         sorted.sort_unstable();
         sorted.dedup();
@@ -315,22 +565,22 @@ mod tests {
 
     #[test]
     fn test_backpressure_does_not_drop() {
-        struct Counter(Arc<Mutex<usize>>);
+        struct Counter(StdArc<Mutex<usize>>);
         impl EventHandler<u64> for Counter {
             fn on_event(&mut self, _event: &u64) {
                 *self.0.lock().unwrap() += 1;
             }
         }
 
-        let count = Arc::new(Mutex::new(0));
-        // Tiny ingress and ring to force the blocking path.
+        let count = StdArc::new(Mutex::new(0));
         let handle = spawn(
             PipelineConfig {
                 ring_capacity: 2,
                 input_capacity: 2,
+                batch_size: 1,
                 ..PipelineConfig::default()
             },
-            Counter(Arc::clone(&count)),
+            Counter(StdArc::clone(&count)),
             |value: u64| value,
         );
         for value in 0..5_000 {
@@ -338,5 +588,19 @@ mod tests {
         }
         handle.shutdown();
         assert_eq!(*count.lock().unwrap(), 5_000);
+    }
+
+    #[test]
+    fn test_closed_publish_is_rejected() {
+        let handle = spawn(
+            PipelineConfig::default(),
+            Recorder {
+                seen: StdArc::new(Mutex::new(Vec::new())),
+            },
+            |value: u64| value,
+        );
+        let sender = handle.sender();
+        handle.shutdown();
+        assert!(matches!(sender.try_send(1), Err(PublishError::Closed(1))));
     }
 }
