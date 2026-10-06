@@ -45,6 +45,9 @@ unit-tested and benchmarked deterministically.
 | `backtest` | Seeded market simulator plus an execution-quality runner (implementation shortfall, vs-VWAP, fill rate, fees). |
 | `execution::gateway` | `VenueGateway` trait and a FIX-backed simulated venue (`NewOrderSingle` → `ExecutionReport`). |
 | `execution::executor` | `IntegratedRouter` that routes through the SOR, sends child orders over FIX, and feeds venue book state back into the router. |
+| `disruptor::ring` | Lock-free, cache-line-padded SPSC ring buffer — the Disruptor ring (pre-allocated, allocation-free hot path). |
+| `disruptor::pipeline` | Ingress queue → ingester thread → ring → core handler topology, with a configurable wait strategy. |
+| `execution::sor_pipeline` | The SOR hosted on the pipeline: many concurrent submitter threads, one deterministic core thread. |
 
 ### Routing logic
 
@@ -218,6 +221,109 @@ cargo run --release --example fix_integration_demo
 
 The FIX path is behind the `VenueGateway` trait, so a TCP session can replace the
 in-process simulator without changing the router.
+
+### Concurrency pipeline (LMAX Disruptor style)
+
+The router is single-threaded by design — that is what makes its decisions
+fast and deterministic. To let many callers feed it concurrently, `src/disruptor`
+implements an LMAX-style staged pipeline:
+
+```mermaid
+flowchart LR
+    P1["producer thread 1"] --> Q
+    P2["producer thread 2"] --> Q
+    P3["producer thread n"] --> Q
+    Q["ingress queue<br/>lock-free MPSC (ArrayQueue)"] --> I["ingester thread<br/>drain + translate (batched)"]
+    I --> R["SPSC ring buffer<br/>lock-free · pre-allocated · padded"]
+    R --> C["core thread<br/>consume + on_batch"]
+    C --> H["SmartOrderRouter<br/>single writer, in order"]
+    H -.->|"ExecutionReport"| P1
+```
+
+- **Ingress** is a bounded, lock-free multi-producer queue
+  ([`crossbeam_queue::ArrayQueue`]). Bursts are absorbed and producers feel
+  backpressure instead of growing memory without bound.
+- **Ingester** drains ingress in batches, translates raw input into typed
+  commands, and publishes them to the ring, preserving arrival order.
+- **Ring** is a lock-free SPSC buffer: no locks, no allocation after startup,
+  `head`/`tail` padded onto separate cache lines, acquire/release publication.
+- **Core** consumes commands in strict order and dispatches them via
+  `EventHandler::on_batch`, so business logic stays deterministic even though
+  submitters are concurrent.
+
+Both threads **spin rather than park**, removing the scheduler wake-up that
+otherwise dominates the round trip. `WaitStrategy` chooses `Yield` (lower CPU)
+or `BusySpin` (lowest tail). `pin_threads` assigns the ingester and core to
+dedicated cores where the platform supports it (best-effort; see
+`available_core_ids`). The topology is generic over command type and handler, so
+the exchange side can adopt the same structure with its own `EventHandler`.
+
+#### Direct mode (single producer)
+
+Fan-in pays for concurrency with an extra thread hop (caller → ingester → core).
+When a single thread produces — one feed handler, one gateway session — that hop
+is pure overhead. `disruptor::direct::DirectPipeline` removes it: the caller
+publishes straight into an SPSC command ring and the core publishes straight
+back over an SPSC result ring, so a synchronous round trip is a single
+caller↔core exchange with no per-order allocation and no parking.
+`execution::DirectSorPipeline` is the SOR on this path; it reuses one scratch
+`ExecutionReport` (via `execute_into`) and returns a `Copy` `CompactReport`, so
+the hot path performs no heap allocation.
+
+```text
+  caller ──► command ring ──► core (SmartOrderRouter)
+     ▲                              │
+     └──────── result ring ─────────┘
+```
+
+#### Sharded mode (multiple producers)
+
+Fan-in costs an extra hop; direct supports only one producer. Sharded keeps the
+single hop *and* supports many producers by giving each producer its own SPSC
+command + result ring and having the core poll them:
+
+```text
+  P0 ─► cmd ring 0 ─┐                       ┌─► result ring 0 ─► P0
+  P1 ─► cmd ring 1 ─┼─► core (SOR) ─────────┼─► result ring 1 ─► P1
+  P2 ─► cmd ring 2 ─┘                       └─► result ring 2 ─► P2
+```
+
+Each shard is a plain SPSC ring, so there is **no CAS contention** and a slow
+producer cannot block the others. There is deliberately **no global ordering**
+across producers; each producer's own commands are processed in order. The core
+scans shards in id order each pass and publishes each result back to the
+originating producer.
+
+```bash
+cargo run --release --example pipeline_demo
+```
+
+Measured round trip (submit → core → reply, release build):
+
+| topology | p50 | p90 | p99 | p99.9 |
+| --- | ---: | ---: | ---: | ---: |
+| fan-in, `Yield` | 1.2 µs | 3.0 µs | 3.5 µs | ~30 µs |
+| fan-in, `BusySpin` | 1.6 µs | 3.0 µs | 3.3 µs | ~31 µs |
+| **direct, `BusySpin`** | **417 ns** | 1.25 µs | 1.3 µs | ~13 µs |
+| sharded 1P | 417 ns | 1.25 µs | 1.4 µs | ~5.5 µs |
+| sharded 2P | 584 ns | 1.5 µs | 1.7 µs | ~7 µs |
+| sharded 4P | 2.0 µs | 2.2 µs | 2.6 µs | ~18 µs |
+| sharded 8P | 3.6 µs | 7.1 µs | 7.8 µs | ~124 µs |
+
+The sharded numbers grow with producer count because a **single serial core**
+serves every producer: with all producers submitting synchronously, each order
+queues behind the others in the core's scan, so p50 grows roughly with
+`producers × handler_time`. One and two producers are sub-microsecond; past that
+the bottleneck is the core, not the transport. The 8-producer tail is the
+machine being over-subscribed (9 busy-spinning threads on 8 cores). Pinning to
+isolated cores, sharding the core per symbol, or batching would push this
+further.
+
+Fire-and-forget throughput: fan-in ~**2.8–3.0M orders/sec**; sharded 4P
+~**1.7M orders/sec** (synchronous submit). The first iteration used
+`std::sync::mpsc` with blocking `recv` and measured 5.5 µs p50 / 44 µs p99 —
+lock-free ingress, spin waits, batching, pinning, the allocation-free direct path
+and sharded ingress moved the single-producer p50 by ~13x and the p99 by ~35x.
 
 ### Continuous integration
 
