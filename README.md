@@ -42,6 +42,9 @@ unit-tested and benchmarked deterministically.
 | `router::sor` | Greedy water-filling allocation, execution simulation against the books, adaptive child-slice sizing, and nanosecond decision-latency statistics. |
 | `router::slicing` | **TWAP** and **VWAP** slicing schedules with configurable intervals and a U-shaped intraday volume profile. |
 | `router::topology` | Deterministic, seeded multi-venue topology generator (no external RNG dependency). |
+| `backtest` | Seeded market simulator plus an execution-quality runner (implementation shortfall, vs-VWAP, fill rate, fees). |
+| `execution::gateway` | `VenueGateway` trait and a FIX-backed simulated venue (`NewOrderSingle` → `ExecutionReport`). |
+| `execution::executor` | `IntegratedRouter` that routes through the SOR, sends child orders over FIX, and feeds venue book state back into the router. |
 
 ### Routing logic
 
@@ -152,13 +155,13 @@ machine (all values in nanoseconds):
 
 | operation | p50 | p99 | p99.9 |
 | --- | ---: | ---: | ---: |
-| `score_destinations` (6 venues) | 458 | 500 | 583 |
-| `route` market | 625 | 667 | 791 |
-| `route` market, reused plan | 458 | 500 | 625 |
-| `route` passive limit | 458 | 500 | 2792 |
-| `execute` market | 708 | 792 | 958 |
-| `execute` market, reused report | 541 | 625 | 750 |
-| `execute_schedule` TWAP (5 slices) | 3917 | 4167 | 10041 |
+| `score_destinations` (6 venues) | 416 | 459 | 542 |
+| `route` market | 459 | 500 | 625 |
+| `route` market, reused plan | 375 | 417 | 541 |
+| `route` passive limit | 333 | 334 | 458 |
+| `execute` market | 625 | 708 | 792 |
+| `execute` market, reused report | 459 | 500 | 625 |
+| `execute_schedule` TWAP (5 slices) | 3584 | 3750 | 11417 |
 
 The routing decision itself (`score_destinations` + `route`) stays below one
 microsecond through p99.9. The five-slice schedule is reported end-to-end because
@@ -169,14 +172,65 @@ The same harness also measures how the decision scales with the number of venues
 
 | venues | p50 | p99 |
 | ---: | ---: | ---: |
-| 6 | 625 | 750 |
-| 12 | 1166 | 1291 |
-| 24 | 2208 | 4541 |
-| 48 | 4500 | 4750 |
-| 96 | 8667 | 9000 |
+| 6 | 459 | 500 |
+| 12 | 834 | 875 |
+| 24 | 1709 | 1833 |
+| 48 | 3667 | 3792 |
+| 96 | 7250 | 7416 |
 
-Cost grows roughly linearly at ~90 ns per venue on this machine, dominated by
-per-venue scoring plus the ranking sort. Even at 96 venues p99 is under 10 µs.
+Cost grows roughly linearly at ~75 ns per venue on this machine, dominated by
+per-venue scoring plus the ranking sort. Even at 96 venues p99 is under 8 µs.
+
+### Backtesting & execution quality
+
+The `backtest` module drives a router through a seeded market simulator and
+reports standard execution-quality metrics. It is deterministic for a given
+seed, so strategy comparisons are reproducible.
+
+```rust
+use rusty_prism::backtest::{run_backtest, BacktestConfig, Strategy};
+use rusty_prism::router::slicing::SliceSchedule;
+
+let strategy = Strategy::Schedule(SliceSchedule::twap(Fixed::from_f64(10_000.0), 50, 10));
+let result = run_backtest(&mut router, &mut simulator, symbol, &request, &strategy, &config);
+println!("{}", result.summary());
+```
+
+Metrics per run: implementation shortfall versus arrival, performance versus the
+interval VWAP, fill rate, executed quantity, total fees and the number of child
+orders. Run the comparison demo with:
+
+```bash
+cargo run --release --example backtest_demo
+```
+
+### FIX integration
+
+The `execution` module closes the loop the pure router leaves open. Each child
+allocation is encoded as a FIX `NewOrderSingle` (MsgType `D`), decoded by the
+venue, matched by the existing `Exchange`, and answered with FIX
+`ExecutionReport` (MsgType `8`) messages that are encoded and decoded again. The
+venue's post-trade book is then pushed back into the router's market-data view.
+
+```bash
+cargo run --release --example fix_integration_demo
+```
+
+The FIX path is behind the `VenueGateway` trait, so a TCP session can replace the
+in-process simulator without changing the router.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo test` (unit + property tests)
+- `cargo build --benches --examples`
+
+Invariant tests in `tests/router_properties.rs` use `proptest` to check
+allocation conservation, participation caps, schedule quantity conservation and
+fixed-point arithmetic bounds. The library is `#![forbid(unsafe_code)]`.
 
 ## Building and Running
 ### Prerequisites

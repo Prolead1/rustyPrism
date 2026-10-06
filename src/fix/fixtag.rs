@@ -16,6 +16,8 @@ pub enum FixTag {
     OrdType,
     OrderID,
     ExecID,
+    ExecType,
+    LastQty,
     LeavesQty,
     CumQty,
     AvgPx,
@@ -41,6 +43,8 @@ impl FixTag {
             FixTag::OrdType => 40,
             FixTag::OrderID => 37,
             FixTag::ExecID => 17,
+            FixTag::ExecType => 150,
+            FixTag::LastQty => 32,
             FixTag::LeavesQty => 151,
             FixTag::CumQty => 14,
             FixTag::AvgPx => 6,
@@ -68,6 +72,8 @@ impl FromStr for FixTag {
             "40" => Ok(FixTag::OrdType),
             "37" => Ok(FixTag::OrderID),
             "17" => Ok(FixTag::ExecID),
+            "150" => Ok(FixTag::ExecType),
+            "32" => Ok(FixTag::LastQty),
             "151" => Ok(FixTag::LeavesQty),
             "14" => Ok(FixTag::CumQty),
             "6" => Ok(FixTag::AvgPx),
@@ -101,11 +107,13 @@ fn test_fix_tag_from_str() {
     assert_eq!("40".parse::<FixTag>().unwrap(), FixTag::OrdType);
     assert_eq!("37".parse::<FixTag>().unwrap(), FixTag::OrderID);
     assert_eq!("17".parse::<FixTag>().unwrap(), FixTag::ExecID);
+    assert_eq!("150".parse::<FixTag>().unwrap(), FixTag::ExecType);
+    assert_eq!("32".parse::<FixTag>().unwrap(), FixTag::LastQty);
     assert_eq!("151".parse::<FixTag>().unwrap(), FixTag::LeavesQty);
     assert_eq!("14".parse::<FixTag>().unwrap(), FixTag::CumQty);
     assert_eq!("6".parse::<FixTag>().unwrap(), FixTag::AvgPx);
     assert_eq!("58".parse::<FixTag>().unwrap(), FixTag::Text);
-    assert_eq!("".parse::<FixTag>().is_err(), true);
+    assert!("".parse::<FixTag>().is_err());
 }
 
 #[test]
@@ -125,6 +133,8 @@ fn test_fix_tag_to_string() {
     assert_eq!(FixTag::OrdType.to_string(), "40");
     assert_eq!(FixTag::OrderID.to_string(), "37");
     assert_eq!(FixTag::ExecID.to_string(), "17");
+    assert_eq!(FixTag::ExecType.to_string(), "150");
+    assert_eq!(FixTag::LastQty.to_string(), "32");
     assert_eq!(FixTag::LeavesQty.to_string(), "151");
     assert_eq!(FixTag::CumQty.to_string(), "14");
     assert_eq!(FixTag::AvgPx.to_string(), "6");
@@ -133,22 +143,22 @@ fn test_fix_tag_to_string() {
 
 #[test]
 fn test_fix_tag_cmp() {
-    assert_eq!(FixTag::BeginString < FixTag::BodyLength, true);
-    assert_eq!(FixTag::BodyLength < FixTag::MsgType, true);
-    assert_eq!(FixTag::MsgType < FixTag::SenderCompID, true);
-    assert_eq!(FixTag::SenderCompID < FixTag::TargetCompID, true);
-    assert_eq!(FixTag::TargetCompID < FixTag::MsgSeqNum, true);
-    assert_eq!(FixTag::MsgSeqNum < FixTag::SendingTime, true);
-    assert_eq!(FixTag::SendingTime < FixTag::Symbol, true);
-    assert_eq!(FixTag::Symbol < FixTag::Side, true);
-    assert_eq!(FixTag::Side < FixTag::OrderQty, true);
-    assert_eq!(FixTag::OrderQty < FixTag::Price, true);
-    assert_eq!(FixTag::Price < FixTag::OrdType, true);
-    assert_eq!(FixTag::OrdType < FixTag::OrderID, true);
-    assert_eq!(FixTag::OrderID < FixTag::ExecID, true);
-    assert_eq!(FixTag::ExecID < FixTag::LeavesQty, true);
-    assert_eq!(FixTag::LeavesQty < FixTag::CumQty, true);
-    assert_eq!(FixTag::CumQty < FixTag::AvgPx, true);
-    assert_eq!(FixTag::AvgPx < FixTag::Text, true);
-    assert_eq!(FixTag::Text < FixTag::CheckSum, true);
+    assert!(FixTag::BeginString < FixTag::BodyLength);
+    assert!(FixTag::BodyLength < FixTag::MsgType);
+    assert!(FixTag::MsgType < FixTag::SenderCompID);
+    assert!(FixTag::SenderCompID < FixTag::TargetCompID);
+    assert!(FixTag::TargetCompID < FixTag::MsgSeqNum);
+    assert!(FixTag::MsgSeqNum < FixTag::SendingTime);
+    assert!(FixTag::SendingTime < FixTag::Symbol);
+    assert!(FixTag::Symbol < FixTag::Side);
+    assert!(FixTag::Side < FixTag::OrderQty);
+    assert!(FixTag::OrderQty < FixTag::Price);
+    assert!(FixTag::Price < FixTag::OrdType);
+    assert!(FixTag::OrdType < FixTag::OrderID);
+    assert!(FixTag::OrderID < FixTag::ExecID);
+    assert!(FixTag::ExecID < FixTag::LeavesQty);
+    assert!(FixTag::LeavesQty < FixTag::CumQty);
+    assert!(FixTag::CumQty < FixTag::AvgPx);
+    assert!(FixTag::AvgPx < FixTag::Text);
+    assert!(FixTag::Text < FixTag::CheckSum);
 }

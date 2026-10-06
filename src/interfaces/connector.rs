@@ -41,9 +41,8 @@ impl FixMsgConnector {
             }
             Err(e) => {
                 log_error!("Failed to bind to port: {}", e);
-                return;
             }
-        };
+        }
     }
 
     pub async fn sender_thread(
@@ -60,7 +59,6 @@ impl FixMsgConnector {
             }
             Err(e) => {
                 log_warn!("Failed to create sender: {}", e);
-                return;
             }
         }
     }

@@ -46,17 +46,14 @@ impl ImpactParams {
         let participation = self.participation(qty, adv);
         let sqrt_participation = sqrt_fixed(participation);
         // coeff * vol * sqrt(participation) / 100
-        (self.temporary_coeff_millibps as i64
-            * self.daily_vol_bps as i64
-            * sqrt_participation.raw())
+        (self.temporary_coeff_millibps * self.daily_vol_bps * sqrt_participation.raw())
             / (100 * SCALE)
     }
 
     /// Expected permanent impact in milli-basis-points.
     pub fn permanent_millibps(&self, qty: Fixed, adv: Fixed) -> i64 {
         let participation = self.participation(qty, adv);
-        (self.permanent_coeff_millibps as i64 * self.daily_vol_bps as i64 * participation.raw())
-            / (100 * SCALE)
+        (self.permanent_coeff_millibps * self.daily_vol_bps * participation.raw()) / (100 * SCALE)
     }
 
     /// Combined temporary + permanent impact.

@@ -41,11 +41,11 @@ impl Exchange {
         let mut orders = Vec::new();
 
         if let Some(buy_list) = self.orderbook.buy_orders.get(symbol) {
-            orders.extend(buy_list.iter().map(|order| order));
+            orders.extend(buy_list.iter());
         }
 
         if let Some(sell_list) = self.orderbook.sell_orders.get(symbol) {
-            orders.extend(sell_list.iter().map(|order| order));
+            orders.extend(sell_list.iter());
         }
 
         orders
@@ -56,6 +56,12 @@ impl Exchange {
         symbols.extend(self.orderbook.buy_orders.keys().cloned());
         symbols.extend(self.orderbook.sell_orders.keys().cloned());
         symbols
+    }
+}
+
+impl Default for Exchange {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

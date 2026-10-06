@@ -104,6 +104,12 @@ impl FixMessage {
     }
 }
 
+impl Default for FixMessage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[test]
 fn test_new_fix_message() {
     let fix_message = FixMessage::new();
@@ -139,7 +145,7 @@ fn test_encode_fix_message() {
 
 #[test]
 fn test_decode_fix_message() {
-    let fix_message = FixMessage::decode(&format!("8=FIX.4.2|35=A|49=SENDER|56=TARGET|\x01"), "|");
+    let fix_message = FixMessage::decode("8=FIX.4.2|35=A|49=SENDER|56=TARGET|\x01", "|");
     assert_eq!(fix_message.fields.len(), 4);
     assert_eq!(
         fix_message.fields.get(&FixTag::BeginString).unwrap(),
