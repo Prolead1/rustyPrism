@@ -183,6 +183,14 @@ impl<E: Send> Consumer<E> {
         }
     }
 
+    /// True when there is nothing to consume. Used by fan-in cores to detect
+    /// that every shard has drained.
+    pub fn is_empty(&self) -> bool {
+        let head = self.inner.head.0.load(Ordering::Relaxed);
+        let tail = self.inner.tail.0.load(Ordering::Acquire);
+        head == tail
+    }
+
     pub fn capacity(&self) -> usize {
         self.inner.capacity
     }

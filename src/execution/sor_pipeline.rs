@@ -12,8 +12,8 @@
 //! ```
 
 use crate::disruptor::{
-    DirectConfig, DirectHandler, DirectPipeline, EventHandler, IngressSender, PipelineConfig,
-    PipelineHandle, PublishError,
+    spawn_sharded, DirectConfig, DirectPipeline, EventHandler, Handler, IngressSender,
+    PipelineConfig, PipelineHandle, PublishError, ShardConfig, ShardProducer, ShardedPipeline,
 };
 use crate::router::fixed::Fixed;
 use crate::router::sor::{ExecutionReport, OrderRequest, SmartOrderRouter};
@@ -211,7 +211,17 @@ struct DirectSorProcessor {
     fixed_symbol: Option<SymbolId>,
 }
 
-impl DirectHandler<OrderRequest, CompactReport> for DirectSorProcessor {
+impl DirectSorProcessor {
+    fn new(router: SmartOrderRouter, fixed_symbol: Option<SymbolId>) -> Self {
+        DirectSorProcessor {
+            router,
+            scratch: ExecutionReport::default(),
+            fixed_symbol,
+        }
+    }
+}
+
+impl Handler<OrderRequest, CompactReport> for DirectSorProcessor {
     fn handle(&mut self, input: OrderRequest) -> CompactReport {
         let symbol = match self.fixed_symbol {
             Some(symbol) => symbol,
@@ -254,14 +264,7 @@ impl DirectSorPipeline {
         config: DirectConfig,
     ) -> Self {
         DirectSorPipeline {
-            inner: DirectPipeline::spawn(
-                config,
-                DirectSorProcessor {
-                    router,
-                    scratch: ExecutionReport::default(),
-                    fixed_symbol,
-                },
-            ),
+            inner: DirectPipeline::spawn(config, DirectSorProcessor::new(router, fixed_symbol)),
         }
     }
 
@@ -273,6 +276,94 @@ impl DirectSorPipeline {
     /// Stop the core once all in-flight work has drained.
     pub fn shutdown(self) {
         self.inner.shutdown();
+    }
+}
+
+/// Producer-side handle for one shard of a [`ShardedSorPipeline`].
+///
+/// `!Sync`: move exactly one handle to each producer thread.
+pub struct ShardSorProducer {
+    inner: ShardProducer<OrderRequest, CompactReport>,
+}
+
+impl ShardSorProducer {
+    /// Shard index, stable for the life of the pipeline.
+    pub fn id(&self) -> usize {
+        self.inner.id()
+    }
+
+    /// Route one order and return its compact execution summary.
+    pub fn submit(&self, request: OrderRequest) -> CompactReport {
+        self.inner.submit(request)
+    }
+
+    /// Best-effort pinning of the current producer thread.
+    pub fn pin_to(&self, core: core_affinity::CoreId) -> bool {
+        self.inner.pin_to(core)
+    }
+}
+
+/// Multi-producer, single-core SOR pipeline using one SPSC ring pair per
+/// producer (see [`crate::disruptor::sharded`]).
+///
+/// Each producer writes directly into its own command ring and reads its own
+/// result ring, so a submit is a single producer↔core hop with no cross-producer
+/// contention. There is no global ordering across producers; a backtest that
+/// needs a defined order should use a single producer.
+pub struct ShardedSorPipeline {
+    core: ShardedPipeline,
+    producers: Vec<ShardSorProducer>,
+}
+
+impl ShardedSorPipeline {
+    /// Spawn `num_producers` shards served by one core running `router`.
+    pub fn spawn(router: SmartOrderRouter, config: ShardConfig, num_producers: usize) -> Self {
+        Self::build(router, None, config, num_producers)
+    }
+
+    /// Spawn for a single known symbol, skipping the per-order symbol hash.
+    pub fn spawn_for_symbol(
+        router: SmartOrderRouter,
+        symbol: SymbolId,
+        config: ShardConfig,
+        num_producers: usize,
+    ) -> Self {
+        Self::build(router, Some(symbol), config, num_producers)
+    }
+
+    fn build(
+        router: SmartOrderRouter,
+        fixed_symbol: Option<SymbolId>,
+        config: ShardConfig,
+        num_producers: usize,
+    ) -> Self {
+        let (core, producers) = spawn_sharded(
+            config,
+            DirectSorProcessor::new(router, fixed_symbol),
+            num_producers,
+        );
+        ShardedSorPipeline {
+            core,
+            producers: producers
+                .into_iter()
+                .map(|inner| ShardSorProducer { inner })
+                .collect(),
+        }
+    }
+
+    /// Move the producer handles out so they can be distributed across threads.
+    pub fn take_producers(&mut self) -> Vec<ShardSorProducer> {
+        std::mem::take(&mut self.producers)
+    }
+
+    /// Number of producer shards.
+    pub fn shard_count(&self) -> usize {
+        self.core.shard_count()
+    }
+
+    /// Stop the core once all producers have stopped submitting.
+    pub fn shutdown(self) {
+        self.core.shutdown();
     }
 }
 
@@ -370,6 +461,40 @@ mod tests {
         for _ in 0..100 {
             let report = pipeline.submit(request(100.0));
             assert!(report.filled_qty.is_positive());
+        }
+        pipeline.shutdown();
+    }
+
+    #[test]
+    fn test_sharded_pipeline_multiple_producers() {
+        let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, 42);
+        let symbol = router.symbols().id(SYMBOL).unwrap();
+        let mut pipeline = ShardedSorPipeline::spawn_for_symbol(
+            router,
+            symbol,
+            ShardConfig {
+                wait_strategy: WaitStrategy::BusySpin,
+                ..ShardConfig::default()
+            },
+            4,
+        );
+        assert_eq!(pipeline.shard_count(), 4);
+        let producers = pipeline.take_producers();
+        assert_eq!(producers.len(), 4);
+
+        let threads: Vec<_> = producers
+            .into_iter()
+            .map(|producer| {
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        let report = producer.submit(request(100.0));
+                        assert!(report.filled_qty.is_positive());
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
         }
         pipeline.shutdown();
     }

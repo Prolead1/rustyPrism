@@ -276,6 +276,24 @@ the hot path performs no heap allocation.
      └──────── result ring ─────────┘
 ```
 
+#### Sharded mode (multiple producers)
+
+Fan-in costs an extra hop; direct supports only one producer. Sharded keeps the
+single hop *and* supports many producers by giving each producer its own SPSC
+command + result ring and having the core poll them:
+
+```text
+  P0 ─► cmd ring 0 ─┐                       ┌─► result ring 0 ─► P0
+  P1 ─► cmd ring 1 ─┼─► core (SOR) ─────────┼─► result ring 1 ─► P1
+  P2 ─► cmd ring 2 ─┘                       └─► result ring 2 ─► P2
+```
+
+Each shard is a plain SPSC ring, so there is **no CAS contention** and a slow
+producer cannot block the others. There is deliberately **no global ordering**
+across producers; each producer's own commands are processed in order. The core
+scans shards in id order each pass and publishes each result back to the
+originating producer.
+
 ```bash
 cargo run --release --example pipeline_demo
 ```
@@ -284,19 +302,28 @@ Measured round trip (submit → core → reply, release build):
 
 | topology | p50 | p90 | p99 | p99.9 |
 | --- | ---: | ---: | ---: | ---: |
-| fan-in, `Yield` | 1.2 µs | 3.0 µs | 3.5 µs | ~15 µs |
-| fan-in, `BusySpin` | 1.6 µs | 3.1 µs | 3.5 µs | ~8 µs |
-| **direct, `BusySpin`** | **417 ns** | **459 ns** | 1.3 µs | 1.5 µs |
-| direct, `Yield` | 417 ns | 500 ns | 1.3 µs | 4.5 µs |
+| fan-in, `Yield` | 1.2 µs | 3.0 µs | 3.5 µs | ~30 µs |
+| fan-in, `BusySpin` | 1.6 µs | 3.0 µs | 3.3 µs | ~31 µs |
+| **direct, `BusySpin`** | **417 ns** | 1.25 µs | 1.3 µs | ~13 µs |
+| sharded 1P | 417 ns | 1.25 µs | 1.4 µs | ~5.5 µs |
+| sharded 2P | 584 ns | 1.5 µs | 1.7 µs | ~7 µs |
+| sharded 4P | 2.0 µs | 2.2 µs | 2.6 µs | ~18 µs |
+| sharded 8P | 3.6 µs | 7.1 µs | 7.8 µs | ~124 µs |
 
-So the typical routing round trip is **sub-microsecond** (~417 ns p50, ~460 ns
-p90); the p99 of ~1.3 µs is OS/cache noise on a shared laptop and is the part
-that isolated cores are meant to remove.
+The sharded numbers grow with producer count because a **single serial core**
+serves every producer: with all producers submitting synchronously, each order
+queues behind the others in the core's scan, so p50 grows roughly with
+`producers × handler_time`. One and two producers are sub-microsecond; past that
+the bottleneck is the core, not the transport. The 8-producer tail is the
+machine being over-subscribed (9 busy-spinning threads on 8 cores). Pinning to
+isolated cores, sharding the core per symbol, or batching would push this
+further.
 
-Fire-and-forget throughput through the fan-in pipeline: **~2.8–3.0M orders/sec**.
-The first iteration used `std::sync::mpsc` with blocking `recv` and measured
-5.5 µs p50 / 44 µs p99 — lock-free ingress, spin waits, batching, pinning and
-the allocation-free direct path moved the p50 by ~13x and the p99 by ~35x.
+Fire-and-forget throughput: fan-in ~**2.8–3.0M orders/sec**; sharded 4P
+~**1.7M orders/sec** (synchronous submit). The first iteration used
+`std::sync::mpsc` with blocking `recv` and measured 5.5 µs p50 / 44 µs p99 —
+lock-free ingress, spin waits, batching, pinning, the allocation-free direct path
+and sharded ingress moved the single-producer p50 by ~13x and the p99 by ~35x.
 
 ### Continuous integration
 

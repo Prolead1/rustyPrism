@@ -10,8 +10,8 @@
 //! cargo bench --bench latency_percentiles
 //! ```
 
-use rusty_prism::disruptor::{DirectConfig, PipelineConfig, WaitStrategy};
-use rusty_prism::execution::{DirectSorPipeline, SorPipeline};
+use rusty_prism::disruptor::{DirectConfig, PipelineConfig, ShardConfig, WaitStrategy};
+use rusty_prism::execution::{DirectSorPipeline, ShardedSorPipeline, SorPipeline};
 use rusty_prism::order::Side;
 use rusty_prism::router::slicing::SliceSchedule;
 use rusty_prism::router::sor::{ExecutionReport, OrderRequest, RoutePlan, SmartOrderRouter};
@@ -232,6 +232,50 @@ fn measure_direct_roundtrip(
     samples
 }
 
+/// Time the sharded (multi-producer, one ring pair each) round trip.
+fn measure_sharded_roundtrip(
+    per_producer: usize,
+    producers: usize,
+    wait_strategy: WaitStrategy,
+) -> Vec<u64> {
+    let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, SEED);
+    let symbol = router.symbols().id(SYMBOL).unwrap();
+    let mut pipeline = ShardedSorPipeline::spawn_for_symbol(
+        router,
+        symbol,
+        ShardConfig {
+            wait_strategy,
+            ..ShardConfig::default()
+        },
+        producers,
+    );
+    let request = market_request();
+    let handles: Vec<_> = pipeline
+        .take_producers()
+        .into_iter()
+        .map(|producer| {
+            let req = request.clone();
+            std::thread::spawn(move || {
+                let mut samples = Vec::with_capacity(per_producer);
+                for _ in 0..per_producer {
+                    let input = req.clone();
+                    let start = Instant::now();
+                    let _ = black_box(producer.submit(input));
+                    samples.push(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+                }
+                samples
+            })
+        })
+        .collect();
+
+    let mut all = Vec::with_capacity(per_producer * producers);
+    for handle in handles {
+        all.extend(handle.join().unwrap());
+    }
+    pipeline.shutdown();
+    all
+}
+
 /// Throughput of fire-and-forget submissions, orders per second.
 fn measure_pipeline_throughput(orders: usize, batch_size: usize) -> f64 {
     let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, SEED);
@@ -398,6 +442,26 @@ fn main() {
     let stats = Stats::from_samples(
         "direct pipeline (yield)",
         measure_direct_roundtrip(200_000, 20_000, WaitStrategy::Yield),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "sharded 1 producer (busy-spin)",
+        measure_sharded_roundtrip(100_000, 1, WaitStrategy::BusySpin),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "sharded 2 producers (busy-spin)",
+        measure_sharded_roundtrip(50_000, 2, WaitStrategy::BusySpin),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "sharded 4 producers (busy-spin)",
+        measure_sharded_roundtrip(50_000, 4, WaitStrategy::BusySpin),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "sharded 8 producers (busy-spin)",
+        measure_sharded_roundtrip(50_000, 8, WaitStrategy::BusySpin),
     );
     print_row(&stats);
 

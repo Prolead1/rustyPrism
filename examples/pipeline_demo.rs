@@ -7,8 +7,8 @@
 //! cargo run --release --example pipeline_demo
 //! ```
 
-use rusty_prism::disruptor::{DirectConfig, PipelineConfig, WaitStrategy};
-use rusty_prism::execution::{DirectSorPipeline, SorPipeline};
+use rusty_prism::disruptor::{DirectConfig, PipelineConfig, ShardConfig, WaitStrategy};
+use rusty_prism::execution::{DirectSorPipeline, ShardedSorPipeline, SorPipeline};
 use rusty_prism::order::Side;
 use rusty_prism::router::fixed::Fixed;
 use rusty_prism::router::sor::{OrderRequest, SmartOrderRouter};
@@ -112,4 +112,47 @@ fn main() {
     );
     direct.shutdown();
     println!("direct pipeline shut down cleanly");
+
+    // Sharded, multi-producer pipeline: one ring pair per producer.
+    let router = SmartOrderRouter::simulated(&["AAPL"], 100.0, 42);
+    let symbol = router.symbols().id("AAPL").unwrap();
+    let producer_count = 4;
+    let per_producer = 5_000;
+    let mut sharded = ShardedSorPipeline::spawn_for_symbol(
+        router,
+        symbol,
+        ShardConfig {
+            pin_core: true,
+            ..ShardConfig::default()
+        },
+        producer_count,
+    );
+    let start = Instant::now();
+    let handles: Vec<_> = sharded
+        .take_producers()
+        .into_iter()
+        .map(|producer| {
+            std::thread::spawn(move || {
+                let request =
+                    OrderRequest::market("AAPL", Side::Buy, 10.0, 100.0).with_adv(5_000_000.0);
+                for _ in 0..per_producer {
+                    let _ = std::hint::black_box(producer.submit(request.clone()));
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    let elapsed = start.elapsed();
+    let total = (producer_count * per_producer) as f64;
+    println!(
+        "\nsharded pipeline: {} producers x {} orders in {:.2?} ({:.0} orders/sec)",
+        producer_count,
+        per_producer,
+        elapsed,
+        total / elapsed.as_secs_f64()
+    );
+    sharded.shutdown();
+    println!("sharded pipeline shut down cleanly");
 }

@@ -24,14 +24,10 @@
 use super::pipeline::wait;
 use super::pipeline::WaitStrategy;
 use super::ring::{spsc, Consumer, Producer};
+use super::Handler;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-
-/// Business logic for the direct pipeline: consumes an input, returns an output.
-pub trait DirectHandler<I, O>: Send {
-    fn handle(&mut self, input: I) -> O;
-}
 
 /// Sizing and wait policy for a [`DirectPipeline`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +64,7 @@ where
     /// Spawn the core thread and return the caller-side handle.
     pub fn spawn<H>(config: DirectConfig, handler: H) -> Self
     where
-        H: DirectHandler<I, O> + 'static,
+        H: Handler<I, O> + 'static,
     {
         let (command_producer, command_consumer) = spsc::<I>(config.command_capacity.max(2));
         let (result_producer, result_consumer) = spsc::<O>(config.result_capacity.max(2));
@@ -128,7 +124,7 @@ fn direct_core_loop<I, O, H>(
 ) where
     I: Send + 'static,
     O: Send + 'static,
-    H: DirectHandler<I, O>,
+    H: Handler<I, O>,
 {
     let mut spins = 0u32;
     loop {
@@ -154,7 +150,7 @@ mod tests {
 
     struct Doubler;
 
-    impl DirectHandler<u64, u64> for Doubler {
+    impl Handler<u64, u64> for Doubler {
         fn handle(&mut self, input: u64) -> u64 {
             input * 2
         }
@@ -174,7 +170,7 @@ mod tests {
         struct Accumulator {
             running: u64,
         }
-        impl DirectHandler<u64, u64> for Accumulator {
+        impl Handler<u64, u64> for Accumulator {
             fn handle(&mut self, input: u64) -> u64 {
                 self.running += input;
                 self.running
