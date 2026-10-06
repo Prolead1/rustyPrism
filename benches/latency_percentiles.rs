@@ -10,8 +10,8 @@
 //! cargo bench --bench latency_percentiles
 //! ```
 
-use rusty_prism::disruptor::{PipelineConfig, WaitStrategy};
-use rusty_prism::execution::SorPipeline;
+use rusty_prism::disruptor::{DirectConfig, PipelineConfig, WaitStrategy};
+use rusty_prism::execution::{DirectSorPipeline, SorPipeline};
 use rusty_prism::order::Side;
 use rusty_prism::router::slicing::SliceSchedule;
 use rusty_prism::router::sor::{ExecutionReport, OrderRequest, RoutePlan, SmartOrderRouter};
@@ -191,8 +191,41 @@ fn measure_pipeline_roundtrip(
     }
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
+        let input = request.clone();
         let start = Instant::now();
+        let _ = black_box(pipeline.submit(input));
+        samples.push(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+    }
+    pipeline.shutdown();
+    samples
+}
+
+/// Time the direct (single-producer, no ingester) round trip.
+fn measure_direct_roundtrip(
+    iterations: usize,
+    warmup: usize,
+    wait_strategy: WaitStrategy,
+) -> Vec<u64> {
+    let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, SEED);
+    let symbol = router.symbols().id(SYMBOL).unwrap();
+    let pipeline = DirectSorPipeline::spawn_for_symbol(
+        router,
+        symbol,
+        DirectConfig {
+            command_capacity: 1024,
+            result_capacity: 1024,
+            wait_strategy,
+        },
+    );
+    let request = market_request();
+    for _ in 0..warmup {
         let _ = black_box(pipeline.submit(request.clone()));
+    }
+    let mut samples = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let input = request.clone();
+        let start = Instant::now();
+        let _ = black_box(pipeline.submit(input));
         samples.push(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     }
     pipeline.shutdown();
@@ -355,6 +388,16 @@ fn main() {
     let stats = Stats::from_samples(
         "sor pipeline (busy-spin)",
         measure_pipeline_roundtrip(50_000, 5_000, WaitStrategy::BusySpin),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "direct pipeline (busy-spin)",
+        measure_direct_roundtrip(200_000, 20_000, WaitStrategy::BusySpin),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "direct pipeline (yield)",
+        measure_direct_roundtrip(200_000, 20_000, WaitStrategy::Yield),
     );
     print_row(&stats);
 

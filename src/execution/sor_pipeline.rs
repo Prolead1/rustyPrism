@@ -11,8 +11,13 @@
 //!          └──────────────── ExecutionReport (reply) ───────────┘
 //! ```
 
-use crate::disruptor::{EventHandler, IngressSender, PipelineConfig, PipelineHandle, PublishError};
+use crate::disruptor::{
+    DirectConfig, DirectHandler, DirectPipeline, EventHandler, IngressSender, PipelineConfig,
+    PipelineHandle, PublishError,
+};
+use crate::router::fixed::Fixed;
 use crate::router::sor::{ExecutionReport, OrderRequest, SmartOrderRouter};
+use crate::router::symbol::SymbolId;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TryRecvError};
@@ -163,9 +168,118 @@ impl SorPipeline {
     }
 }
 
+/// A compact, `Copy` execution summary for the allocation-free direct path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactReport {
+    pub requested_qty: Fixed,
+    pub filled_qty: Fixed,
+    pub avg_price: Fixed,
+    pub arrival_price: Fixed,
+    pub realized_slippage_millibps: i64,
+    pub total_fees: i128,
+    pub num_fills: u32,
+    pub decision_latency_ns: u64,
+}
+
+impl CompactReport {
+    pub fn from_report(report: &ExecutionReport) -> Self {
+        CompactReport {
+            requested_qty: report.requested_qty,
+            filled_qty: report.filled_qty,
+            avg_price: report.avg_price,
+            arrival_price: report.arrival_price,
+            realized_slippage_millibps: report.realized_slippage_millibps,
+            total_fees: report.total_fees,
+            num_fills: report.fills.len() as u32,
+            decision_latency_ns: report.decision_latency_ns,
+        }
+    }
+
+    pub fn unfilled_qty(&self) -> Fixed {
+        (self.requested_qty - self.filled_qty).max(Fixed::ZERO)
+    }
+}
+
+/// Core-thread handler for the direct (single-producer) SOR pipeline.
+///
+/// It reuses one [`ExecutionReport`] scratch buffer across calls via
+/// `execute_into`, so the hot path performs no heap allocation.
+struct DirectSorProcessor {
+    router: SmartOrderRouter,
+    scratch: ExecutionReport,
+    /// If set, the symbol is taken directly instead of hashed per order.
+    fixed_symbol: Option<SymbolId>,
+}
+
+impl DirectHandler<OrderRequest, CompactReport> for DirectSorProcessor {
+    fn handle(&mut self, input: OrderRequest) -> CompactReport {
+        let symbol = match self.fixed_symbol {
+            Some(symbol) => symbol,
+            None => self.router.symbols().id(&input.symbol).unwrap_or(u32::MAX),
+        };
+        self.router.execute_into(&input, symbol, &mut self.scratch);
+        CompactReport::from_report(&self.scratch)
+    }
+}
+
+/// Lowest-latency SOR pipeline for a single producer thread.
+///
+/// Unlike [`SorPipeline`] there is no ingester thread: the caller publishes
+/// straight into the command ring and the core publishes straight back. A
+/// synchronous `submit` is therefore a single caller↔core exchange with no
+/// per-order allocation (the core reuses a scratch report) and no parking.
+/// The result is a `Copy` [`CompactReport`] rather than the heap-owning
+/// [`ExecutionReport`].
+pub struct DirectSorPipeline {
+    inner: DirectPipeline<OrderRequest, CompactReport>,
+}
+
+impl DirectSorPipeline {
+    pub fn spawn(router: SmartOrderRouter, config: DirectConfig) -> Self {
+        Self::build(router, None, config)
+    }
+
+    /// Spawn for a single known symbol, skipping the per-order symbol hash.
+    pub fn spawn_for_symbol(
+        router: SmartOrderRouter,
+        symbol: SymbolId,
+        config: DirectConfig,
+    ) -> Self {
+        Self::build(router, Some(symbol), config)
+    }
+
+    fn build(
+        router: SmartOrderRouter,
+        fixed_symbol: Option<SymbolId>,
+        config: DirectConfig,
+    ) -> Self {
+        DirectSorPipeline {
+            inner: DirectPipeline::spawn(
+                config,
+                DirectSorProcessor {
+                    router,
+                    scratch: ExecutionReport::default(),
+                    fixed_symbol,
+                },
+            ),
+        }
+    }
+
+    /// Route one order and return its compact execution summary.
+    pub fn submit(&self, request: OrderRequest) -> CompactReport {
+        self.inner.submit(request)
+    }
+
+    /// Stop the core once all in-flight work has drained.
+    pub fn shutdown(self) {
+        self.inner.shutdown();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::disruptor::WaitStrategy;
     use crate::order::Side;
     use crate::router::fixed::Fixed;
 
@@ -240,6 +354,23 @@ mod tests {
     fn test_shutdown_is_clean() {
         let pipeline = pipeline();
         pipeline.submit(request(10.0)).unwrap();
+        pipeline.shutdown();
+    }
+
+    #[test]
+    fn test_direct_pipeline_round_trip() {
+        let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, 42);
+        let pipeline = DirectSorPipeline::spawn(
+            router,
+            DirectConfig {
+                wait_strategy: WaitStrategy::BusySpin,
+                ..DirectConfig::default()
+            },
+        );
+        for _ in 0..100 {
+            let report = pipeline.submit(request(100.0));
+            assert!(report.filled_qty.is_positive());
+        }
         pipeline.shutdown();
     }
 }

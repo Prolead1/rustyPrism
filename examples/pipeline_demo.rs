@@ -7,8 +7,8 @@
 //! cargo run --release --example pipeline_demo
 //! ```
 
-use rusty_prism::disruptor::PipelineConfig;
-use rusty_prism::execution::SorPipeline;
+use rusty_prism::disruptor::{DirectConfig, PipelineConfig, WaitStrategy};
+use rusty_prism::execution::{DirectSorPipeline, SorPipeline};
 use rusty_prism::order::Side;
 use rusty_prism::router::fixed::Fixed;
 use rusty_prism::router::sor::{OrderRequest, SmartOrderRouter};
@@ -45,6 +45,7 @@ fn main() {
 
     let start = Instant::now();
     let mut threads = Vec::with_capacity(producers);
+    // (fan-in timing below includes the synchronous submit round trip)
     for producer in 0..producers {
         let pipeline = Arc::clone(&pipeline);
         threads.push(std::thread::spawn(move || {
@@ -81,5 +82,34 @@ fn main() {
         .ok()
         .expect("no outstanding references")
         .shutdown();
-    println!("pipeline shut down cleanly");
+    println!("fan-in pipeline shut down cleanly");
+
+    // Direct, single-producer pipeline: no ingester hop, allocation-free.
+    let router = SmartOrderRouter::simulated(&["AAPL"], 100.0, 42);
+    let symbol = router.symbols().id("AAPL").unwrap();
+    let direct = DirectSorPipeline::spawn_for_symbol(
+        router,
+        symbol,
+        DirectConfig {
+            wait_strategy: WaitStrategy::BusySpin,
+            ..DirectConfig::default()
+        },
+    );
+    let request = OrderRequest::market("AAPL", Side::Buy, 10.0, 100.0).with_adv(5_000_000.0);
+    let iterations = 200_000;
+    let mut total = std::time::Duration::ZERO;
+    for _ in 0..iterations {
+        // Clone (and its String allocation) happens outside the timed region.
+        let input = request.clone();
+        let op = Instant::now();
+        let _ = std::hint::black_box(direct.submit(input));
+        total += op.elapsed();
+    }
+    println!(
+        "\ndirect pipeline: {} submits, {:.0} ns/op mean (busy-spin, clone excluded)",
+        iterations,
+        total.as_nanos() as f64 / iterations as f64
+    );
+    direct.shutdown();
+    println!("direct pipeline shut down cleanly");
 }

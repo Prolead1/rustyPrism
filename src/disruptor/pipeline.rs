@@ -399,7 +399,7 @@ fn core_loop<C, H>(
 
 /// Spin briefly, then yield, to balance latency against CPU burn.
 #[inline]
-fn wait(strategy: WaitStrategy, spins: &mut u32) {
+pub(super) fn wait(strategy: WaitStrategy, spins: &mut u32) {
     match strategy {
         WaitStrategy::BusySpin => std::hint::spin_loop(),
         WaitStrategy::Yield => {

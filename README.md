@@ -258,22 +258,45 @@ dedicated cores where the platform supports it (best-effort; see
 `available_core_ids`). The topology is generic over command type and handler, so
 the exchange side can adopt the same structure with its own `EventHandler`.
 
+#### Direct mode (single producer)
+
+Fan-in pays for concurrency with an extra thread hop (caller → ingester → core).
+When a single thread produces — one feed handler, one gateway session — that hop
+is pure overhead. `disruptor::direct::DirectPipeline` removes it: the caller
+publishes straight into an SPSC command ring and the core publishes straight
+back over an SPSC result ring, so a synchronous round trip is a single
+caller↔core exchange with no per-order allocation and no parking.
+`execution::DirectSorPipeline` is the SOR on this path; it reuses one scratch
+`ExecutionReport` (via `execute_into`) and returns a `Copy` `CompactReport`, so
+the hot path performs no heap allocation.
+
+```text
+  caller ──► command ring ──► core (SmartOrderRouter)
+     ▲                              │
+     └──────── result ring ─────────┘
+```
+
 ```bash
 cargo run --release --example pipeline_demo
 ```
 
-Measured round trip (submit → ingress → ring → core → reply, release build):
+Measured round trip (submit → core → reply, release build):
 
-| wait strategy | p50 | p99 | p99.9 |
-| --- | ---: | ---: | ---: |
-| `Yield` | 1.2 µs | 5.7 µs | ~49 µs |
-| `BusySpin` | 1.1 µs | 3.4 µs | ~15 µs |
+| topology | p50 | p90 | p99 | p99.9 |
+| --- | ---: | ---: | ---: | ---: |
+| fan-in, `Yield` | 1.2 µs | 3.0 µs | 3.5 µs | ~15 µs |
+| fan-in, `BusySpin` | 1.6 µs | 3.1 µs | 3.5 µs | ~8 µs |
+| **direct, `BusySpin`** | **417 ns** | **459 ns** | 1.3 µs | 1.5 µs |
+| direct, `Yield` | 417 ns | 500 ns | 1.3 µs | 4.5 µs |
 
-Fire-and-forget throughput: **~2.8–3.0M orders/sec**. The first iteration of this
-pipeline used `std::sync::mpsc` with blocking `recv` and measured 5.5 µs p50 /
-44 µs p99 — switching to a lock-free ingress queue, spin waits and batching cut
-the round trip roughly 5x and the p99 by more than 10x. The pure routing decision
-itself remains sub-microsecond (see the table above).
+So the typical routing round trip is **sub-microsecond** (~417 ns p50, ~460 ns
+p90); the p99 of ~1.3 µs is OS/cache noise on a shared laptop and is the part
+that isolated cores are meant to remove.
+
+Fire-and-forget throughput through the fan-in pipeline: **~2.8–3.0M orders/sec**.
+The first iteration used `std::sync::mpsc` with blocking `recv` and measured
+5.5 µs p50 / 44 µs p99 — lock-free ingress, spin waits, batching, pinning and
+the allocation-free direct path moved the p50 by ~13x and the p99 by ~35x.
 
 ### Continuous integration
 

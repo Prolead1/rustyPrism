@@ -17,8 +17,11 @@
 //! The topology is generic over command type and handler, so the exchange side
 //! can adopt the same structure with its own [`pipeline::EventHandler`].
 
+pub mod direct;
 pub mod pipeline;
 pub mod ring;
+
+pub use direct::{DirectConfig, DirectHandler, DirectPipeline};
 
 pub use pipeline::{
     available_core_ids, spawn, EventHandler, IngressSender, PipelineConfig, PipelineHandle,
