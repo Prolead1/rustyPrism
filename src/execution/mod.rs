@@ -7,6 +7,8 @@
 
 pub mod executor;
 pub mod gateway;
+pub mod sor_pipeline;
 
 pub use executor::{IntegratedReport, IntegratedRouter};
 pub use gateway::{ChildOrder, FixVenueGateway, OrderStatus, VenueExecution, VenueGateway};
+pub use sor_pipeline::{SorCommand, SorPipeline, SorProcessor, SubmitError};

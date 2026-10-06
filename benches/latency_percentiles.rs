@@ -10,6 +10,8 @@
 //! cargo bench --bench latency_percentiles
 //! ```
 
+use rusty_prism::disruptor::{PipelineConfig, WaitStrategy};
+use rusty_prism::execution::SorPipeline;
 use rusty_prism::order::Side;
 use rusty_prism::router::slicing::SliceSchedule;
 use rusty_prism::router::sor::{ExecutionReport, OrderRequest, RoutePlan, SmartOrderRouter};
@@ -167,6 +169,35 @@ fn measure_execute_reused(iterations: usize, warmup: usize) -> Vec<u64> {
     samples
 }
 
+/// Time a full pipeline round trip: submit → ingress → ring → core → reply.
+fn measure_pipeline_roundtrip(
+    iterations: usize,
+    warmup: usize,
+    wait_strategy: WaitStrategy,
+) -> Vec<u64> {
+    let router = SmartOrderRouter::simulated(&[SYMBOL], 100.0, SEED);
+    let pipeline = SorPipeline::spawn(
+        router,
+        PipelineConfig {
+            ring_capacity: 1024,
+            input_capacity: 1024,
+            wait_strategy,
+        },
+    );
+    let request = market_request();
+    for _ in 0..warmup {
+        let _ = black_box(pipeline.submit(request.clone()));
+    }
+    let mut samples = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let start = Instant::now();
+        let _ = black_box(pipeline.submit(request.clone()));
+        samples.push(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+    }
+    pipeline.shutdown();
+    samples
+}
+
 /// Build a router with `venue_count` venues by cycling the simulated templates.
 fn scale_router(venue_count: usize) -> SmartOrderRouter {
     let mut registry = SymbolRegistry::new();
@@ -278,6 +309,19 @@ fn main() {
     print_row(&stats);
 
     println!("\nAll timings are per-call wall-clock nanoseconds.");
+
+    println!("\nPipeline latency (submit → core → reply, includes two thread hops)");
+    print_header();
+    let stats = Stats::from_samples(
+        "sor pipeline (yield)",
+        measure_pipeline_roundtrip(50_000, 5_000, WaitStrategy::Yield),
+    );
+    print_row(&stats);
+    let stats = Stats::from_samples(
+        "sor pipeline (busy-spin)",
+        measure_pipeline_roundtrip(50_000, 5_000, WaitStrategy::BusySpin),
+    );
+    print_row(&stats);
 
     println!("\nRouting-decision scaling with venue count (route market)");
     print_header();

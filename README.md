@@ -45,6 +45,9 @@ unit-tested and benchmarked deterministically.
 | `backtest` | Seeded market simulator plus an execution-quality runner (implementation shortfall, vs-VWAP, fill rate, fees). |
 | `execution::gateway` | `VenueGateway` trait and a FIX-backed simulated venue (`NewOrderSingle` → `ExecutionReport`). |
 | `execution::executor` | `IntegratedRouter` that routes through the SOR, sends child orders over FIX, and feeds venue book state back into the router. |
+| `disruptor::ring` | Lock-free, cache-line-padded SPSC ring buffer — the Disruptor ring (pre-allocated, allocation-free hot path). |
+| `disruptor::pipeline` | Ingress queue → ingester thread → ring → core handler topology, with a configurable wait strategy. |
+| `execution::sor_pipeline` | The SOR hosted on the pipeline: many concurrent submitter threads, one deterministic core thread. |
 
 ### Routing logic
 
@@ -218,6 +221,55 @@ cargo run --release --example fix_integration_demo
 
 The FIX path is behind the `VenueGateway` trait, so a TCP session can replace the
 in-process simulator without changing the router.
+
+### Concurrency pipeline (LMAX Disruptor style)
+
+The router is single-threaded by design — that is what makes its decisions
+fast and deterministic. To let many callers feed it concurrently, `src/disruptor`
+implements an LMAX-style staged pipeline:
+
+```mermaid
+flowchart LR
+    P1["producer thread 1"] --> Q
+    P2["producer thread 2"] --> Q
+    P3["producer thread n"] --> Q
+    Q["ingress queue<br/>bounded MPSC (backpressure)"] --> I["ingester thread<br/>translate raw → command"]
+    I --> R["SPSC ring buffer<br/>lock-free · pre-allocated · padded"]
+    R --> C["core thread<br/>EventHandler"]
+    C --> H["SmartOrderRouter<br/>single writer, in order"]
+    H -.->|"ExecutionReport"| P1
+```
+
+- **Ingress** is a bounded multi-producer channel: bursts are absorbed and
+  producers feel backpressure instead of growing memory without bound.
+- **Ingester** translates raw input into typed commands and publishes them to
+  the ring, preserving arrival order.
+- **Ring** is a lock-free SPSC buffer: no locks, no allocation after startup,
+  `head`/`tail` padded onto separate cache lines, acquire/release publication.
+- **Core** consumes commands in strict order and runs the router, so the
+  business logic stays deterministic even though submitters are concurrent.
+
+`WaitStrategy` chooses between `Yield` (lower CPU) and `BusySpin` (lower p50
+tail when threads are pinned to dedicated cores). The topology is generic over
+command type and handler, so the exchange side can adopt the same structure
+with its own `EventHandler`.
+
+```bash
+cargo run --release --example pipeline_demo
+```
+
+Measured round trip (submit → ingress → ring → core → reply, including two
+thread hops and the reply channel), release build:
+
+| wait strategy | p50 | p99 |
+| --- | ---: | ---: |
+| `Yield` | 5.5 µs | ~44 µs |
+| `BusySpin` | 4.7 µs | ~45 µs |
+
+The gulf between p50 and p99 is OS scheduling: on a shared machine the tail is
+dominated by thread wake-up latency, which is why a production deployment pins
+the ingester and core to isolated cores. The pure routing decision itself stays
+sub-microsecond (see the table above).
 
 ### Continuous integration
 
